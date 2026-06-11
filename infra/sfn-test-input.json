@@ -1,0 +1,27 @@
+{
+  "tables": [
+    { "database": "dodokpo_test_creation_staging", "table": "Assessment" },
+    { "database": "dodokpo_test_creation_staging", "table": "AssessmentDispatch" },
+    { "database": "dodokpo_test_creation_staging", "table": "AssessmentTaker" },
+    { "database": "dodokpo_test_creation_staging", "table": "Category" },
+    { "database": "dodokpo_test_creation_staging", "table": "Code" },
+    { "database": "dodokpo_test_creation_staging", "table": "Domain" },
+    { "database": "dodokpo_test_creation_staging", "table": "Question" },
+    { "database": "dodokpo_test_creation_staging", "table": "QuestionVersion" },
+    { "database": "dodokpo_test_creation_staging", "table": "Skill" },
+    { "database": "dodokpo_test_creation_staging", "table": "SkillLevel" },
+    { "database": "dodokpo_test_creation_staging", "table": "SkillLevelAssignment" },
+    { "database": "dodokpo_test_creation_staging", "table": "Test" },
+    { "database": "dodokpo_test_creation_staging", "table": "TestQuestion" },
+    { "database": "dodokpo_test_creation_staging", "table": "_SkillToSkillLevel" },
+    { "database": "dodokpo_test_creation_staging", "table": "_TestsToAssessments" },
+    { "database": "dodokpo_test_execution_staging", "table": "AssessmentTakingLog" },
+    { "database": "dodokpo_test_execution_staging", "table": "AssessmentTaker" },
+    { "database": "dodokpo_test_execution_staging", "table": "Identity" },
+    { "database": "dodokpo_test_execution_staging", "table": "QuestionFlag" },
+    { "database": "dodokpo_test_execution_staging", "table": "ScreenShot" },
+    { "database": "dodokpo_test_execution_staging", "table": "TestResult" },
+    { "database": "dodokpo_test_execution_staging", "table": "WindowViolation" },
+    { "database": "dodokpo_user_mgt_staging", "table": "organizations" }
+  ]
+}

@@ -1,0 +1,247 @@
+<mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- Title -->
+    <mxCell id="title" value="Optimized Serverless Lakehouse Architecture — Athena + S3" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="327" y="20" width="1000" height="40" as="geometry" />
+    </mxCell>
+
+    <!-- ===== SWIM LANES ===== -->
+
+    <!-- Lane: Source -->
+    <mxCell id="lane_source" value="Source" style="swimlane;startSize=30;horizontal=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="40" y="80" width="160" height="980" as="geometry" />
+    </mxCell>
+
+    <!-- Lane: Ingestion -->
+    <mxCell id="lane_ingestion" value="Ingestion" style="swimlane;startSize=30;horizontal=0;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="200" y="80" width="320" height="980" as="geometry" />
+    </mxCell>
+
+    <!-- Lane: Storage & Catalog -->
+    <mxCell id="lane_storage" value="Storage &amp; Catalog" style="swimlane;startSize=30;horizontal=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="520" y="80" width="320" height="980" as="geometry" />
+    </mxCell>
+
+    <!-- Lane: Query & Analytics -->
+    <mxCell id="lane_query" value="Query &amp; Analytics" style="swimlane;startSize=30;horizontal=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="840" y="80" width="320" height="980" as="geometry" />
+    </mxCell>
+
+    <!-- Lane: Orchestration & Ops -->
+    <mxCell id="lane_ops" value="Orchestration &amp; Ops" style="swimlane;startSize=30;horizontal=0;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1160" y="80" width="320" height="980" as="geometry" />
+    </mxCell>
+
+    <!-- ===== SOURCE ===== -->
+
+    <!-- RDS -->
+    <mxCell id="rds" value="Amazon RDS / Aurora&#xa;(Source Database)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#C7131F;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.rds;" vertex="1" parent="1">
+      <mxGeometry x="80" y="200" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="rds_label" value="RDS / Aurora" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="65" y="285" width="110" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- ===== INGESTION — Initial Load ===== -->
+
+    <!-- Initial Load group label -->
+    <mxCell id="grp_initial" value="Initial Load (One-Time)" style="text;html=1;align=center;fontStyle=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+      <mxGeometry x="220" y="150" width="280" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- RDS Snapshot -->
+    <mxCell id="snapshot" value="RDS Snapshot" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#C7131F;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.rds_db_instance_snapshot;" vertex="1" parent="1">
+      <mxGeometry x="270" y="190" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="snapshot_label" value="RDS Snapshot&#xa;~$0.10 one-time" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="248" y="275" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Snapshot Export Arrow -->
+    <mxCell id="e_rds_snap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="rds" target="snapshot" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- Ongoing Sync group label -->
+    <mxCell id="grp_ongoing" value="Ongoing Incremental Sync" style="text;html=1;align=center;fontStyle=1;fontSize=11;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+      <mxGeometry x="220" y="430" width="280" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- EventBridge -->
+    <mxCell id="eventbridge" value="Amazon EventBridge&#xa;(Scheduled Trigger)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+      <mxGeometry x="270" y="460" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="eb_label" value="EventBridge&#xa;Twice-daily | $1/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="248" y="545" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Step Functions -->
+    <mxCell id="stepfn" value="AWS Step Functions&#xa;(Fan-out Orchestration)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.step_functions;" vertex="1" parent="1">
+      <mxGeometry x="380" y="580" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="sf_label" value="Step Functions&#xa;$2–$5/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="368" y="665" width="110" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Lambda -->
+    <mxCell id="lambda" value="AWS Lambda&#xa;(Table Sync — Watermark)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" vertex="1" parent="1">
+      <mxGeometry x="270" y="720" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="lam_label" value="Lambda&#xa;$2–$5/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="258" y="805" width="110" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Parameter Store -->
+    <mxCell id="paramstore" value="AWS Parameter Store&#xa;(Watermark State)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.systems_manager_parameter_store;" vertex="1" parent="1">
+      <mxGeometry x="380" y="840" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="ps_label" value="Parameter Store&#xa;Free" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="368" y="925" width="110" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- Ingestion edges -->
+    <mxCell id="e_eb_sf" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="eventbridge" target="stepfn" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_sf_lam" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="stepfn" target="lambda" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_lam_ps" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="lambda" target="paramstore" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_rds_lam" style="edgeStyle=orthogonalEdgeStyle;dashed=1;" edge="1" source="rds" target="lambda" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ===== STORAGE & CATALOG ===== -->
+
+    <!-- S3 Raw -->
+    <mxCell id="s3_raw" value="Amazon S3&#xa;(Raw / Landing Zone)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#3F8624;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" vertex="1" parent="1">
+      <mxGeometry x="590" y="190" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="s3r_label" value="S3 Raw&#xa;Parquet (Snapshot Export)" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="565" y="275" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- S3 Curated -->
+    <mxCell id="s3_curated" value="Amazon S3&#xa;(Curated / Parquet)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#3F8624;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" vertex="1" parent="1">
+      <mxGeometry x="590" y="580" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="s3c_label" value="S3 Curated&#xa;Parquet + Snappy | $1–$3/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="560" y="665" width="140" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Glue Data Catalog -->
+    <mxCell id="glue" value="AWS Glue&#xa;Data Catalog" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.glue_data_catalog;" vertex="1" parent="1">
+      <mxGeometry x="590" y="780" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="glue_label" value="Glue Data Catalog&#xa;$1/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="568" y="865" width="120" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- Storage edges -->
+    <mxCell id="e_snap_s3r" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="snapshot" target="s3_raw" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_lam_s3c" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="lambda" target="s3_curated" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_s3r_s3c" style="edgeStyle=orthogonalEdgeStyle;dashed=1;" edge="1" source="s3_raw" target="s3_curated" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="700" y="230" />
+          <mxPoint x="700" y="619" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_s3c_glue" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s3_curated" target="glue" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ===== QUERY & ANALYTICS ===== -->
+
+    <!-- Athena -->
+    <mxCell id="athena" value="Amazon Athena&#xa;(Serverless SQL)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.athena;" vertex="1" parent="1">
+      <mxGeometry x="910" y="580" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="ath_label" value="Athena&#xa;$1–$5/mo (per scan)" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="888" y="665" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- QuickSight -->
+    <mxCell id="quicksight" value="Amazon QuickSight&#xa;(Dashboards — Optional)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.quicksight;" vertex="1" parent="1">
+      <mxGeometry x="910" y="380" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="qs_label" value="QuickSight&#xa;Optional licensing" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="888" y="465" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- Lambda API -->
+    <mxCell id="lambda_api" value="AWS Lambda&#xa;(API — Dashboard Backend)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" vertex="1" parent="1">
+      <mxGeometry x="910" y="200" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="lapi_label" value="Lambda API&#xa;(lightweight)" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="888" y="285" width="130" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- Query edges -->
+    <mxCell id="e_glue_ath" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="glue" target="athena" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_s3c_ath" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s3_curated" target="athena" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_ath_qs" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="athena" target="quicksight" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_ath_lapi" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="athena" target="lambda_api" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ===== ORCHESTRATION & OPS ===== -->
+
+    <!-- IAM -->
+    <mxCell id="iam" value="AWS IAM&#xa;(Roles &amp; Policies)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#DD344C;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.role;" vertex="1" parent="1">
+      <mxGeometry x="1230" y="190" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="iam_label" value="IAM&#xa;Free" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="1248" y="275" width="50" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- CloudWatch -->
+    <mxCell id="cloudwatch" value="Amazon CloudWatch&#xa;(Logs &amp; Alarms)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch;" vertex="1" parent="1">
+      <mxGeometry x="1230" y="420" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="cw_label" value="CloudWatch&#xa;7-day retention | $2–$5/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="1205" y="505" width="130" height="30" as="geometry" />
+    </mxCell>
+
+    <!-- SNS -->
+    <mxCell id="sns" value="Amazon SNS&#xa;(Failure Alerts)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sns;" vertex="1" parent="1">
+      <mxGeometry x="1230" y="620" width="78" height="78" as="geometry" />
+    </mxCell>
+    <mxCell id="sns_label" value="SNS&#xa;$0–$1/mo" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;" vertex="1" parent="1">
+      <mxGeometry x="1248" y="705" width="50" height="20" as="geometry" />
+    </mxCell>
+
+    <!-- Ops edges -->
+    <mxCell id="e_cw_sns" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="cloudwatch" target="sns" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_sf_cw" style="edgeStyle=orthogonalEdgeStyle;dashed=1;" edge="1" source="stepfn" target="cloudwatch" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e_lam_cw" style="edgeStyle=orthogonalEdgeStyle;dashed=1;" edge="1" source="lambda" target="cloudwatch" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ===== COST SUMMARY BOX ===== -->
+    <mxCell id="cost_box" value="💰 Cost Summary&#xa;─────────────────&#xa;One-time load: ~$0.10&#xa;Monthly recurring: $9–$25&#xa;─────────────────&#xa;S3: $1–$3 | Lambda: $2–$5&#xa;Step Fn: $2–$5 | Athena: $1–$5&#xa;Glue: $1 | EventBridge: $1&#xa;CloudWatch: $2–$5 | SNS: $0–$1" style="text;html=1;strokeColor=#d6b656;fillColor=#fffacd;align=left;verticalAlign=top;spacingLeft=8;rounded=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="1160" y="800" width="280" height="180" as="geometry" />
+    </mxCell>
+
+  </root>
+</mxGraphModel>

@@ -1,0 +1,29 @@
+# Build the three Lambda container images and push them to ECR.
+# Image URIs come from environment variables populated by scripts/push-images.ps1
+# (which reads `terraform output` for the ECR repository URLs).
+#
+# Manual usage:
+#   $env:BRONZE_IMAGE_URI = "<account>.dkr.ecr.eu-west-1.amazonaws.com/dodokpo-dev-bronze-sync:bootstrap"
+#   $env:SILVER_IMAGE_URI = "..."
+#   $env:GOLD_IMAGE_URI   = "..."
+#   docker compose build
+#   docker compose push
+
+services:
+  bronze:
+    image: ${BRONZE_IMAGE_URI:?set BRONZE_IMAGE_URI}
+    platform: linux/amd64
+    build:
+      context: ./src/lambda
+
+  silver:
+    image: ${SILVER_IMAGE_URI:?set SILVER_IMAGE_URI}
+    platform: linux/amd64
+    build:
+      context: ./src/lambda/silver
+
+  gold:
+    image: ${GOLD_IMAGE_URI:?set GOLD_IMAGE_URI}
+    platform: linux/amd64
+    build:
+      context: ./src/lambda/gold

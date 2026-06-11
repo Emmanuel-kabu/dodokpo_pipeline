@@ -1,0 +1,41 @@
+# Virtual environments
+dodo_env/
+venv/
+env/
+.venv/
+dodd-env/
+config/
+
+# IDE
+.vscode/
+.claude/
+
+# Terraform
+*.tfvars
+*.tfvars.json
+.terraform/
+.terraform.lock.hcl
+
+# Credentials and secrets
+*.key
+*.pem
+*.p12
+.aws/
+.env
+.env.local
+credentials.json
+secrets.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db

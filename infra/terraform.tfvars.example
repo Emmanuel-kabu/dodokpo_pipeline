@@ -1,0 +1,38 @@
+project            = "dodokpo"
+environment        = "dev"
+aws_region         = "eu-west-1"
+alert_email        = "ops@example.com"
+log_retention_days = 7
+
+# Active pipeline: silver Lambda fires weekly on Mondays at 06:00 UTC; the
+# Glue silver crawler runs 30 min later. Adjust to match when the platform
+# engineer's RDS export lands in bronze.
+sync_schedule        = "cron(0 6 ? * MON *)"
+glue_silver_schedule = "cron(30 6 ? * MON *)"
+
+# Bronze Lambda is currently dormant — bronze data is produced out-of-band by
+# the platform engineer's RDS export job. db_secret_arn still has to point at
+# a valid Secrets Manager secret (a placeholder is fine) because the Lambda
+# resource references it, but the credentials inside don't have to be real
+# until the bronze Lambda is reactivated.
+db_secret_arn = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:dodokpo/db-credentials-XXXXXX"
+
+# Optional overrides:
+# sfn_log_level        = "ERROR"   # use ALL in dev for full execution data
+# glue_bronze_schedule = "cron(30 2 * * ? *)"
+# glue_gold_schedule   = "cron(30 4 * * ? *)"
+
+# silver_tables: list of {database, table} objects processed by the silver
+# Lambda map. Override here only to add/remove tables; the default in
+# variables.tf covers test_creation (15) + test_execution (7) = 22 tables.
+# silver_tables = [
+#   { database = "dodokpo_test_creation_staging",  table = "Assessment" },
+#   { database = "dodokpo_test_execution_staging", table = "TestResult" },
+# ]
+
+# Cross-account RDS Export to S3 (populate if the prod team sets up
+# AWS-native RDS Snapshot Export targeting the bronze bucket). Not needed
+# for the current pipeline where bronze receives data via a custom export
+# job already running in the prod account.
+# rds_export_role_arns    = ["arn:aws:iam::<prod-account-id>:role/<rds-export-role>"]
+# rds_export_kms_key_arns = ["arn:aws:kms:<region>:<prod-account-id>:key/<key-id>"]
