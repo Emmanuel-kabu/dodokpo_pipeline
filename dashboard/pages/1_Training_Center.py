@@ -214,58 +214,68 @@ else:
 
     # ═════════════════════════════ OUTCOMES ═════════════════════════════
     with tab_out:
-        # ── Readiness funnel — Candidate → Pass → Advanced ────────────
-        st.markdown("<div class='card-title'>Readiness Funnel — Candidates → Pass → Advanced</div>", unsafe_allow_html=True)
-        _fs0 = f.sort_values("_seq")
-        _ever_pass = int(f.groupby("email")["is_pass"].max().fillna(0).sum())
-        _first_pass_cand = f[(f["_seq"] == 1) & (f["is_pass"] == 1)]["email"].nunique()
-        _latest_prof = _fs0.groupby("email")["proficiency_level"].last()
-        _adv_cand = int((_latest_prof == "Advanced").sum())
-        _fn = pd.DataFrame({
-            "stage": ["Candidates", "Passed (ever)", "Passed 1st sitting", "Reached Advanced"],
-            "n": [n_cand, _ever_pass, _first_pass_cand, _adv_cand],
-        })
-        fig_fn = go.Figure(go.Funnel(
-            y=_fn["stage"], x=_fn["n"], textinfo="value+percent initial",
-            marker=dict(color=[sh.DARK_BLUE, sh.NAVY, sh.ORANGE, sh.GREEN]),
-            connector=dict(line=dict(color=T["border"])),
-        ))
-        fig_fn.update_layout(template=TPL, height=260, margin=dict(t=10, b=10, l=0, r=0))
-        st.plotly_chart(fig_fn, use_container_width=True)
-        st.caption("Candidate-level: of all candidates in the selection, how many ever passed, "
-                   "passed on their first sitting, and reached Advanced proficiency.")
+        # ── Row 1: Readiness funnel | Proficiency mix ─────────────────
+        c_fn, c_pm = st.columns(2)
+        with c_fn:
+            st.markdown("<div class='card-title'>Readiness Funnel — Candidates → Pass → Advanced</div>", unsafe_allow_html=True)
+            _fs0 = f.sort_values("_seq")
+            _ever_pass = int(f.groupby("email")["is_pass"].max().fillna(0).sum())
+            _first_pass_cand = f[(f["_seq"] == 1) & (f["is_pass"] == 1)]["email"].nunique()
+            _latest_prof = _fs0.groupby("email")["proficiency_level"].last()
+            _adv_cand = int((_latest_prof == "Advanced").sum())
+            _fn = pd.DataFrame({
+                "stage": ["Candidates", "Passed (ever)", "Passed 1st sitting", "Reached Advanced"],
+                "n": [n_cand, _ever_pass, _first_pass_cand, _adv_cand],
+            })
+            fig_fn = go.Figure(go.Funnel(
+                y=_fn["stage"], x=_fn["n"], textinfo="value+percent initial",
+                marker=dict(color=[sh.DARK_BLUE, sh.NAVY, sh.ORANGE, sh.GREEN]),
+                connector=dict(line=dict(color=T["border"])),
+            ))
+            fig_fn.update_layout(template=TPL, height=320, margin=dict(t=10, b=10, l=0, r=0))
+            st.plotly_chart(fig_fn, use_container_width=True)
+            st.caption("Of all candidates: ever passed, passed 1st sitting, reached Advanced.")
+        with c_pm:
+            st.markdown("<div class='card-title'>Proficiency Mix by Specialization</div>", unsafe_allow_html=True)
+            if "proficiency_level" in f.columns:
+                pm = (f.groupby(["specialization", "proficiency_level"]).size()
+                      .reset_index(name="n"))
+                fig_p = px.bar(pm, x="specialization", y="n", color="proficiency_level", barmode="stack",
+                               template=TPL, color_discrete_map={"Advanced": sh.GREEN, "Intermediate": sh.AMBER, "Beginner": sh.RED},
+                               labels={"specialization": "", "n": "Attempts", "proficiency_level": ""})
+                fig_p.update_layout(height=320, margin=dict(t=10, b=10, l=0, r=0),
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                st.plotly_chart(fig_p, use_container_width=True)
 
-        st.divider()
+        # ── Row 2: Specialization performance | Score distribution ────
+        c_perf, c_box = st.columns(2)
+        with c_perf:
+            st.markdown("<div class='card-title'>Specialization Performance — Pass Rate & Avg Score</div>", unsafe_allow_html=True)
+            sp = f.groupby("specialization").agg(
+                attempts=("email", "size"),
+                pass_rate_pct=("is_pass", lambda s: s.mean() * 100),
+                avg_score_pct=("score_pct", "mean"),
+            ).reset_index().sort_values("attempts", ascending=False)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=sp["specialization"], y=sp["pass_rate_pct"], name="Pass Rate %", marker_color=sh.ORANGE))
+            fig.add_trace(go.Scatter(x=sp["specialization"], y=sp["avg_score_pct"], name="Avg Score %",
+                                     mode="lines+markers", line=dict(color=sh.DARK_BLUE, width=2.5, dash="dot"),
+                                     marker=dict(size=9)))
+            fig.update_layout(template=TPL, height=330, margin=dict(t=20, b=10, l=0, r=0), bargap=0.4,
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02), yaxis=dict(title="%", range=[0, 105]))
+            st.plotly_chart(fig, use_container_width=True)
+        with c_box:
+            st.markdown("<div class='card-title'>Score Distribution by Specialization</div>", unsafe_allow_html=True)
+            _order = f.groupby("specialization")["score_pct"].median().sort_values(ascending=False).index.tolist()
+            fig_box = px.box(f, x="specialization", y="score_pct", template=TPL,
+                             category_orders={"specialization": _order},
+                             color_discrete_sequence=[sh.NAVY], points="outliers",
+                             labels={"specialization": "", "score_pct": "Score %"})
+            fig_box.update_layout(height=330, margin=dict(t=20, b=10, l=0, r=0), yaxis=dict(range=[0, 105]))
+            st.plotly_chart(fig_box, use_container_width=True)
+        st.caption("Box = median & IQR per specialization; whiskers/points show spread & outliers.")
 
-        # ── Specialization performance ────────────────────────────────
-        st.markdown("<div class='card-title'>Specialization Performance — Pass Rate & Avg Score</div>", unsafe_allow_html=True)
-        sp = f.groupby("specialization").agg(
-            attempts=("email", "size"),
-            pass_rate_pct=("is_pass", lambda s: s.mean() * 100),
-            avg_score_pct=("score_pct", "mean"),
-        ).reset_index().sort_values("attempts", ascending=False)
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=sp["specialization"], y=sp["pass_rate_pct"], name="Pass Rate %", marker_color=sh.ORANGE))
-        fig.add_trace(go.Scatter(x=sp["specialization"], y=sp["avg_score_pct"], name="Avg Score %",
-                                 mode="lines+markers", line=dict(color=sh.DARK_BLUE, width=2.5, dash="dot"),
-                                 marker=dict(size=9)))
-        fig.update_layout(template=TPL, height=300, margin=dict(t=20, b=10, l=0, r=0), bargap=0.45,
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02), yaxis=dict(title="%", range=[0, 105]))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ── Score distribution by specialization (spread, not just avg) ─
-        st.markdown("<div class='card-title'>Score Distribution by Specialization</div>", unsafe_allow_html=True)
-        _order = f.groupby("specialization")["score_pct"].median().sort_values(ascending=False).index.tolist()
-        fig_box = px.box(f, x="specialization", y="score_pct", template=TPL,
-                         category_orders={"specialization": _order},
-                         color_discrete_sequence=[sh.NAVY], points="outliers",
-                         labels={"specialization": "", "score_pct": "Score %"})
-        fig_box.update_layout(height=320, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]))
-        st.plotly_chart(fig_box, use_container_width=True)
-        st.caption("Box = median & IQR per specialization; whiskers/points show spread & outliers — "
-                   "a fairer read than averages alone.")
-
-        # ── Assessment level + Pass-by-sitting (retake dynamics) ───────
+        # ── Row 3: Assessment level + Pass-by-sitting (retake dynamics) ─
         c_diff, c_seq = st.columns(2)
         with c_diff:
             st.markdown("<div class='card-title'>Attempts by Assessment Level + Pass Rate</div>", unsafe_allow_html=True)
@@ -311,53 +321,39 @@ else:
             else:
                 st.caption("Not enough repeat sittings to chart.")
 
-        # ── Proficiency mix by specialization (full width) ────────────
-        st.markdown("<div class='card-title'>Proficiency Mix by Specialization</div>", unsafe_allow_html=True)
-        if "proficiency_level" in f.columns:
-            pm = (f.groupby(["specialization", "proficiency_level"]).size()
-                  .reset_index(name="n"))
-            fig_p = px.bar(pm, x="specialization", y="n", color="proficiency_level", barmode="stack",
-                           template=TPL, color_discrete_map={"Advanced": sh.GREEN, "Intermediate": sh.AMBER, "Beginner": sh.RED},
-                           labels={"specialization": "", "n": "Attempts", "proficiency_level": ""})
-            fig_p.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0),
-                                legend=dict(orientation="h", yanchor="bottom", y=1.02))
-            st.plotly_chart(fig_p, use_container_width=True)
-
     # ═══════════════════════════ PROGRESSION ════════════════════════════
     with tab_prog:
-        # ── Trend over time ───────────────────────────────────────────
-        if "attempt_month" in f.columns and f["attempt_month"].notna().any():
+        c_tr, c_mig = st.columns(2)
+        with c_tr:
             st.markdown("<div class='card-title'>Avg Score over Time</div>", unsafe_allow_html=True)
-            tr = (f[f["attempt_month"].astype(str).str.len() >= 7]
-                  .groupby("attempt_month").agg(avg_score_pct=("score_pct", "mean"),
-                                                attempts=("email", "size")).reset_index().sort_values("attempt_month"))
-            if not tr.empty:
-                fig_t = px.line(tr, x="attempt_month", y="avg_score_pct", markers=True, template=TPL,
-                                labels={"attempt_month": "", "avg_score_pct": "Avg Score %"})
-                fig_t.update_traces(line_color=sh.ORANGE)
-                fig_t.update_layout(height=240, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]))
-                st.plotly_chart(fig_t, use_container_width=True)
+            if "attempt_month" in f.columns and f["attempt_month"].notna().any():
+                tr = (f[f["attempt_month"].astype(str).str.len() >= 7]
+                      .groupby("attempt_month").agg(avg_score_pct=("score_pct", "mean"),
+                                                    attempts=("email", "size")).reset_index().sort_values("attempt_month"))
+                if not tr.empty:
+                    fig_t = px.line(tr, x="attempt_month", y="avg_score_pct", markers=True, template=TPL,
+                                    labels={"attempt_month": "", "avg_score_pct": "Avg Score %"})
+                    fig_t.update_traces(line_color=sh.ORANGE)
+                    fig_t.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]))
+                    st.plotly_chart(fig_t, use_container_width=True)
+                else:
+                    st.info("Not enough timestamped attempts for a trend.")
             else:
-                st.info("Not enough timestamped attempts for a trend.")
-        else:
-            st.info("No monthly timestamps available for a trend.")
-
-        st.divider()
-
-        # ── Proficiency migration — first vs latest sitting per candidate ─
-        st.markdown("<div class='card-title'>Proficiency Migration — First → Latest sitting</div>", unsafe_allow_html=True)
-        _po = ["Beginner", "Intermediate", "Advanced"]
-        _pf = f.sort_values("_seq")
-        _firstp = _pf.groupby("email")["proficiency_level"].first()
-        _lastp = _pf.groupby("email")["proficiency_level"].last()
-        _mig = pd.crosstab(_firstp, _lastp).reindex(index=_po, columns=_po).fillna(0).astype(int)
-        fig_mig = px.imshow(_mig.values, x=_po, y=_po, text_auto=True, template=TPL,
-                            color_continuous_scale="Oranges",
-                            labels=dict(x="Latest proficiency", y="First proficiency", color="Candidates"))
-        fig_mig.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False)
-        st.plotly_chart(fig_mig, use_container_width=True)
-        st.caption("Candidate counts moving from their first sitting's proficiency (rows) to their latest "
-                   "(columns). On the diagonal = unchanged; above it = improved tier.")
+                st.info("No monthly timestamps available for a trend.")
+        with c_mig:
+            st.markdown("<div class='card-title'>Proficiency Migration — First → Latest sitting</div>", unsafe_allow_html=True)
+            _po = ["Beginner", "Intermediate", "Advanced"]
+            _pf = f.sort_values("_seq")
+            _firstp = _pf.groupby("email")["proficiency_level"].first()
+            _lastp = _pf.groupby("email")["proficiency_level"].last()
+            _mig = pd.crosstab(_firstp, _lastp).reindex(index=_po, columns=_po).fillna(0).astype(int)
+            fig_mig = px.imshow(_mig.values, x=_po, y=_po, text_auto=True, template=TPL,
+                                color_continuous_scale="Oranges",
+                                labels=dict(x="Latest proficiency", y="First proficiency", color="Candidates"))
+            fig_mig.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False)
+            st.plotly_chart(fig_mig, use_container_width=True)
+        st.caption("Migration: candidate counts from first→latest sitting proficiency "
+                   "(diagonal = unchanged, above = improved tier).")
 
         # ── Retake score-change + interval (candidates who re-sat) ─────
         _rt = f.sort_values(["email", "test_id", "_seq"])
@@ -404,27 +400,7 @@ else:
 
     # ════════════════════════════ INTEGRITY ═════════════════════════════
     with tab_integ:
-        st.markdown("<div class='card-title'>Violation Rate by Specialization</div>", unsafe_allow_html=True)
-        iv = f.copy()
-        iv["_vc"] = pd.to_numeric(iv.get("violation_count"), errors="coerce").fillna(0)
-        ig = iv.groupby("specialization").agg(
-            attempts=("email", "size"),
-            violation_rate_pct=("_vc", lambda s: (s > 0).mean() * 100),
-            total_violations=("_vc", "sum"),
-        ).reset_index().sort_values("violation_rate_pct", ascending=False)
-        fig_iv = px.bar(ig, x="specialization", y="violation_rate_pct", template=TPL,
-                        color="violation_rate_pct",
-                        color_continuous_scale=[[0, sh.GREEN], [0.5, sh.AMBER], [1, sh.RED]],
-                        range_color=[0, 100],
-                        labels={"specialization": "", "violation_rate_pct": "% attempts with a violation"})
-        fig_iv.update_layout(height=320, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False)
-        st.plotly_chart(fig_iv, use_container_width=True)
-        st.caption("Share of attempts with at least one test-window violation, by specialization.")
-
-        st.divider()
-
-        # ── Integrity vs performance (per candidate) ──────────────────
-        st.markdown("<div class='card-title'>Integrity vs Performance — do violators score differently?</div>", unsafe_allow_html=True)
+        # Per-candidate aggregate used by both the scatter and the watchlist below.
         _ci = f.groupby("email").agg(
             name=("candidatename", "first"),
             attempts=("is_pass", "size"),
@@ -433,16 +409,36 @@ else:
             viol_dur=("violation_duration_sec", "sum"),
         ).reset_index()
         _ci["viol_per_attempt"] = _ci["total_viol"] / _ci["attempts"].replace(0, pd.NA)
-        fig_sc = px.scatter(_ci, x="viol_per_attempt", y="avg_score", size="attempts",
-                            template=TPL, hover_name="name",
-                            color="avg_score", color_continuous_scale=[[0, sh.RED], [0.5, sh.AMBER], [1, sh.GREEN]],
+
+        c_vr, c_sc = st.columns(2)
+        with c_vr:
+            st.markdown("<div class='card-title'>Violation Rate by Specialization</div>", unsafe_allow_html=True)
+            iv = f.copy()
+            iv["_vc"] = pd.to_numeric(iv.get("violation_count"), errors="coerce").fillna(0)
+            ig = iv.groupby("specialization").agg(
+                attempts=("email", "size"),
+                violation_rate_pct=("_vc", lambda s: (s > 0).mean() * 100),
+                total_violations=("_vc", "sum"),
+            ).reset_index().sort_values("violation_rate_pct", ascending=False)
+            fig_iv = px.bar(ig, x="specialization", y="violation_rate_pct", template=TPL,
+                            color="violation_rate_pct",
+                            color_continuous_scale=[[0, sh.GREEN], [0.5, sh.AMBER], [1, sh.RED]],
                             range_color=[0, 100],
-                            labels={"viol_per_attempt": "Avg violations per attempt", "avg_score": "Avg score %"})
-        fig_sc.update_layout(height=340, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False,
-                             yaxis=dict(range=[0, 105]))
-        st.plotly_chart(fig_sc, use_container_width=True)
-        st.caption("Each dot = a candidate (size = attempts). Look for whether high-violation candidates "
-                   "cluster at lower (or higher) scores.")
+                            labels={"specialization": "", "violation_rate_pct": "% attempts with a violation"})
+            fig_iv.update_layout(height=340, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False)
+            st.plotly_chart(fig_iv, use_container_width=True)
+        with c_sc:
+            st.markdown("<div class='card-title'>Integrity vs Performance</div>", unsafe_allow_html=True)
+            fig_sc = px.scatter(_ci, x="viol_per_attempt", y="avg_score", size="attempts",
+                                template=TPL, hover_name="name",
+                                color="avg_score", color_continuous_scale=[[0, sh.RED], [0.5, sh.AMBER], [1, sh.GREEN]],
+                                range_color=[0, 100],
+                                labels={"viol_per_attempt": "Avg violations per attempt", "avg_score": "Avg score %"})
+            fig_sc.update_layout(height=340, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False,
+                                 yaxis=dict(range=[0, 105]))
+            st.plotly_chart(fig_sc, use_container_width=True)
+        st.caption("Left: share of attempts with a violation, by specialization. Right: each dot = a candidate "
+                   "(size = attempts) — do high-violation candidates score lower?")
 
         st.divider()
 
