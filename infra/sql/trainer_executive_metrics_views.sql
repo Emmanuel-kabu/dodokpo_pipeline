@@ -237,32 +237,53 @@ GROUP BY attempt_month, attempt_quarter, attempt_year, test_difficulty,
 -- ---------------------------------------------------------------------------
 -- 4. Retake interval distribution
 -- ---------------------------------------------------------------------------
+-- A retake is the SAME person re-sitting the SAME test. In this source each
+-- sitting is a separate assessmenttaker (one per dispatch) and `attemptnumber`
+-- is always 1 — so the real retake sequence must be reconstructed by ordering a
+-- person's sittings of a test by start_time, partitioned on (email, test_id).
+-- (The previous version partitioned on assessment_taker_id + attempt_number,
+-- which gave one row per partition → LAG always NULL → the view was empty, so the
+-- Executive retake histogram silently showed nothing.)
 CREATE OR REPLACE VIEW candidate_retake_intervals AS
 WITH attempt_pairs AS (
     SELECT
         assessment_taker_id,
         candidatename,
+        email,
         test_id,
         test_title,
-        attempt_number,
         start_time,
-        LAG(start_time) OVER (
-            PARTITION BY assessment_taker_id, test_id
-            ORDER BY attempt_number
-        ) AS prev_start_time
+        score_pct,
+        is_pass,
+        pass_status,
+        attempt_year,
+        attempt_quarter,
+        attempt_month,
+        ROW_NUMBER() OVER (PARTITION BY email, test_id ORDER BY start_time)    AS sitting_no,
+        LAG(start_time) OVER (PARTITION BY email, test_id ORDER BY start_time) AS prev_start_time,
+        LAG(score_pct)  OVER (PARTITION BY email, test_id ORDER BY start_time) AS prev_score_pct
     FROM dodokpo_dev_gold.trainer_candidate_performance
     WHERE start_time IS NOT NULL
 )
 SELECT
     assessment_taker_id,
     candidatename,
+    email,
     test_id,
     test_title,
-    attempt_number,
+    sitting_no,
     start_time,
     prev_start_time,
-    date_diff('day', prev_start_time, start_time) AS days_between_attempts,
-    date_diff('hour', prev_start_time, start_time) AS hours_between_attempts
+    score_pct,
+    prev_score_pct,
+    score_pct - prev_score_pct                                          AS score_delta,
+    is_pass,
+    pass_status,
+    attempt_year,
+    attempt_quarter,
+    attempt_month,
+    date_diff('second', prev_start_time, start_time) / 86400.0          AS days_between_attempts,
+    date_diff('hour', prev_start_time, start_time)                      AS hours_between_attempts
 FROM attempt_pairs
 WHERE prev_start_time IS NOT NULL;
 

@@ -7,12 +7,28 @@ The candidate roster is one row per person; click to open their profile.
 """
 from __future__ import annotations
 
+import html
+import re
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
 import shared as sh
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html_tc(value) -> str:
+    """Render authoring-tool question HTML as clean plain text for tables."""
+    if not isinstance(value, str) or not value:
+        return ""
+    s = re.sub(r"<br\s*/?>", " ", value, flags=re.IGNORECASE)
+    s = re.sub(r"</(p|div|li)>", " ", s, flags=re.IGNORECASE)
+    s = _TAG_RE.sub("", s)
+    s = html.unescape(s).replace("\xa0", " ")
+    return re.sub(r"\s+", " ", s).strip()
 
 st.set_page_config(page_title="Dodokpo · Training Center", page_icon="🎓", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -29,8 +45,9 @@ sh.page_header("🎓 Training Center", "Performance by Year → Specialization (
 with st.spinner("Loading analytics from Athena…"):
     attempts_all, e1 = sh.query_view("cohort_specialization_attempt", limit=50_000)
     coverage, e2 = sh.query_view("additional_analytics_coverage", limit=1)
+    qperf, e3 = sh.query_view("question_performance", limit=50_000)
 
-errors = [e for e in (e1, e2) if e]
+errors = [e for e in (e1, e2, e3) if e]
 if errors:
     st.error("**Some views failed to load:**\n\n" + "\n\n".join(errors))
 
@@ -191,8 +208,8 @@ st.divider()
 if f.empty:
     st.info("No attempts for the current selection.")
 else:
-    tab_out, tab_prog, tab_integ, tab_coh, tab_cmp, tab_cand = st.tabs(
-        ["📊 Outcomes", "📈 Progression", "🛡 Integrity", "🎓 Cohorts", "⇄ Compare", "👤 Candidates"]
+    tab_out, tab_prog, tab_integ, tab_coh, tab_cmp, tab_cnt, tab_cand = st.tabs(
+        ["📊 Outcomes", "📈 Progression", "🛡 Integrity", "🎓 Cohorts", "⇄ Compare", "📝 Content", "👤 Candidates"]
     )
 
     # ═════════════════════════════ OUTCOMES ═════════════════════════════
@@ -549,6 +566,56 @@ else:
                                  _b: st.column_config.NumberColumn(format="%.1f"),
                                  "Δ (A − B)": st.column_config.NumberColumn(format="%+.1f"),
                              })
+
+    # ════════════════════════════ CONTENT ═══════════════════════════════
+    with tab_cnt:
+        st.caption("Catalogue-wide question efficacy across **all recorded attempts** "
+                   "(not affected by the slicers above) — from the per-question result JSON.")
+        if qperf is None or qperf.empty:
+            st.info("No question-level data available.")
+        else:
+            qp = qperf.copy()
+            for _c in ["times_served", "times_answered", "times_correct", "answer_rate_pct",
+                       "correct_rate_pct", "avg_idle_sec", "avg_score_ratio_pct"]:
+                if _c in qp.columns:
+                    qp[_c] = pd.to_numeric(qp[_c], errors="coerce")
+            qp["question"] = qp.get("question_text", pd.Series(dtype=str)).fillna("").map(_strip_html_tc)
+            _blank = qp["question"].str.len() == 0
+            qp.loc[_blank, "question"] = qp.loc[_blank, "question_title"].fillna("").map(_strip_html_tc)
+            qp.loc[qp["question"].str.len() == 0, "question"] = "(no text)"
+
+            _min = st.slider("Minimum times served", 1, 100, 20, key="tc_minserved",
+                             help="Hide rarely-served questions so a single bad attempt doesn't dominate.")
+            qpf = qp[qp["times_served"] >= _min]
+            st.caption(f"{len(qpf):,} of {len(qp):,} questions meet the ≥{_min}-served threshold.")
+
+            def _q_section(by, asc, title, cap):
+                st.markdown(f"<div class='card-title'>{title}</div>", unsafe_allow_html=True)
+                cols = ["question", "question_type", "question_difficulty", "specialization",
+                        "times_served", "answer_rate_pct", "correct_rate_pct", "avg_idle_sec"]
+                show = qpf.sort_values(by, ascending=asc).head(15)[cols].rename(columns={
+                    "question": "Question", "question_type": "Type", "question_difficulty": "Difficulty",
+                    "specialization": "Specialization", "times_served": "Served",
+                    "answer_rate_pct": "Answer %", "correct_rate_pct": "Correct %", "avg_idle_sec": "Avg Idle (s)",
+                })
+                st.dataframe(show, use_container_width=True, hide_index=True, column_config={
+                    "Question": st.column_config.TextColumn("Question", width="large",
+                                                            help="Full question text — hover to read."),
+                    "Answer %": st.column_config.NumberColumn(format="%.0f%%"),
+                    "Correct %": st.column_config.NumberColumn(format="%.0f%%"),
+                    "Avg Idle (s)": st.column_config.NumberColumn(format="%.1f"),
+                })
+                st.caption(cap)
+
+            if qpf.empty:
+                st.info("No questions meet the threshold — lower it.")
+            else:
+                _q_section("correct_rate_pct", True, "Hardest Questions (lowest correct rate)",
+                           "Lowest share of sittings scoring any points. 0% over many sittings often flags a broken or mis-keyed item.")
+                _q_section("answer_rate_pct", True, "Most-Skipped Questions (lowest answer rate)",
+                           "Most often left unanswered — candidates run out of time or skip them.")
+                _q_section("avg_idle_sec", False, "Idle-Time Hotspots (longest think time)",
+                           "Highest average idle time before answering — the questions that make candidates pause.")
 
     # ════════════════════════════ CANDIDATES ════════════════════════════
     with tab_cand:

@@ -492,3 +492,84 @@ SELECT
     COUNT(DISTINCT CASE WHEN cohort <> 'Unassigned' THEN cohort END)         AS distinct_cohorts,
     SUM(CASE WHEN cohort = 'Unassigned' THEN 1 ELSE 0 END)                   AS unassigned_cohort_attempts
 FROM dodokpo_dev_gold.cohort_specialization_attempt;
+
+
+-- ---------------------------------------------------------------------------
+-- 9. Per-question CONTENT EFFICACY — how candidates actually perform on each
+-- question, aggregated across ALL recorded attempts. Unnests the per-question
+-- `result` JSON in test_execution_testresult (questionId / scored / idleTime /
+-- isAnswered), dedupes testresults to the latest load_date per sitting, and
+-- joins question metadata + domain→specialization. Powers "hardest questions",
+-- "most-skipped" and "idle-time hotspots". NOTE: this is catalogue-wide content
+-- efficacy (not filtered by the dashboard's year/cohort slicers).
+-- specialization uses the real crosswalk only (unmatched → 'Unmapped'); no
+-- hash fallback here — content gaps should read honestly.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW question_performance AS
+WITH testresult_dedup AS (
+    SELECT result FROM (
+        SELECT result, load_date,
+               ROW_NUMBER() OVER (PARTITION BY assessmenttakerid, testid, attemptnumber
+                                  ORDER BY load_date DESC) AS _rn
+        FROM dodokpo_dev_silver.test_execution_testresult
+        WHERE result IS NOT NULL AND result <> '' AND result LIKE '[{%'
+    ) WHERE _rn = 1
+),
+parsed AS (
+    SELECT
+        json_extract_scalar(q, '$.questionId')                          AS question_id,
+        TRY(CAST(json_extract_scalar(q, '$.score')   AS DOUBLE))        AS max_score,
+        TRY(CAST(json_extract_scalar(q, '$.scored')  AS DOUBLE))        AS achieved_score,
+        TRY(CAST(json_extract_scalar(q, '$.idleTime') AS DOUBLE))       AS idle_time_sec,
+        TRY(CAST(json_extract_scalar(q, '$.isAnswered') AS BOOLEAN))    AS is_answered
+    FROM testresult_dedup t
+    CROSS JOIN UNNEST(CAST(json_parse(t.result) AS ARRAY(JSON))) AS u(q)
+),
+question_dedup AS (
+    SELECT id, questiontype, difficultylevel, questiontitle, questiontext, domainid FROM (
+        SELECT id, questiontype, difficultylevel, questiontitle, questiontext, domainid, load_date,
+               ROW_NUMBER() OVER (PARTITION BY id ORDER BY load_date DESC) AS _rn
+        FROM dodokpo_dev_silver.test_creation_question
+    ) WHERE _rn = 1
+),
+domain_dedup AS (
+    SELECT id, name FROM (
+        SELECT id, name, load_date,
+               ROW_NUMBER() OVER (PARTITION BY id ORDER BY load_date DESC) AS _rn
+        FROM dodokpo_dev_silver.test_creation_domain
+    ) WHERE _rn = 1
+),
+agg AS (
+    SELECT
+        question_id,
+        COUNT(*)                                                        AS times_served,
+        SUM(CASE WHEN is_answered THEN 1 ELSE 0 END)                    AS times_answered,
+        SUM(CASE WHEN achieved_score > 0 THEN 1 ELSE 0 END)             AS times_correct,
+        AVG(idle_time_sec)                                              AS avg_idle_sec,
+        AVG(CASE WHEN max_score > 0 THEN achieved_score / max_score END) * 100.0 AS avg_score_ratio_pct,
+        AVG(max_score)                                                  AS avg_max_score
+    FROM parsed
+    WHERE question_id IS NOT NULL
+    GROUP BY question_id
+)
+SELECT
+    a.question_id,
+    qd.questiontype                                                     AS question_type,
+    qd.difficultylevel                                                  AS question_difficulty,
+    qd.questiontitle                                                    AS question_title,
+    qd.questiontext                                                     AS question_text,
+    COALESCE(cw.specialization, 'Unmapped')                             AS specialization,
+    d.name                                                              AS domain_name,
+    a.times_served,
+    a.times_answered,
+    a.times_correct,
+    a.times_answered * 100.0 / NULLIF(a.times_served, 0)                AS answer_rate_pct,
+    a.times_correct  * 100.0 / NULLIF(a.times_served, 0)                AS correct_rate_pct,
+    a.avg_idle_sec,
+    a.avg_score_ratio_pct,
+    a.avg_max_score
+FROM agg a
+LEFT JOIN question_dedup qd ON a.question_id = qd.id
+LEFT JOIN domain_dedup   d  ON qd.domainid   = d.id
+LEFT JOIN specialization_crosswalk cw
+       ON LOWER(TRIM(regexp_replace(d.name, '[ _]\d{6,}.*$', ''))) = LOWER(cw.key_norm);
