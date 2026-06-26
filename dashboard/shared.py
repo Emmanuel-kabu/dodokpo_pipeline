@@ -169,110 +169,306 @@ def weighted(df: pd.DataFrame, value_col: str, weight_col: str = "attempts") -> 
     return float((v[mask] * w[mask]).sum() / w[mask].sum())
 
 
-@st.dialog("Candidate Profile", width="large")
-def candidate_profile(peer_df: pd.DataFrame, email: str, group_label: str, nonce_key: str) -> None:
-    """Shared candidate profile. `peer_df` is the pre-filtered peer set (a cohort,
-    a specialization, or the current dashboard selection); `group_label` names it.
-    Shows summary cards (incl. avg score vs the peer average), every assessment
-    score, a score trend, and retake progression.
-    """
-    TPL = active_theme()["template"]
-    if peer_df is None or peer_df.empty or "email" not in peer_df.columns:
-        st.warning("Attempt-level data is unavailable.")
-        return
-    hist = peer_df[peer_df["email"] == email].copy()
-    if hist.empty:
-        st.warning("No attempts found for this candidate.")
-        if st.button("Close"):
-            st.rerun()
-        return
+def _candidate_profile_data(peer_df: pd.DataFrame, email: str) -> dict | None:
+    """Pure (Streamlit-free, testable) computation of everything the candidate
+    profile renders. Returns None if there is no history for `email`.
 
-    for c in ["score_pct", "duration_min", "attempt_number", "violation_count", "violation_duration_sec"]:
-        if c in hist.columns:
-            hist[c] = pd.to_numeric(hist[c], errors="coerce")
-    hist["start_dt"] = pd.to_datetime(hist.get("start_time"), errors="coerce")
+    Retake order is reconstructed from start_time per test_id — the source's
+    `attempt_number` is unreliable (always 1), so it must NOT be used for ordering.
+    """
+    if peer_df is None or peer_df.empty or "email" not in peer_df.columns:
+        return None
+    peer = peer_df.copy()
+    for c in ["score_pct", "duration_min", "violation_count", "violation_duration_sec", "is_pass"]:
+        if c in peer.columns:
+            peer[c] = pd.to_numeric(peer[c], errors="coerce")
+    peer["_start_dt"] = pd.to_datetime(peer.get("start_time"), errors="coerce")
+
+    hist = peer[peer["email"] == email].copy()
+    if hist.empty:
+        return None
+    hist = hist.sort_values("_start_dt", kind="stable")
+    hist["_seq"] = (hist.groupby("test_id").cumcount() + 1) if "test_id" in hist.columns else 1
+
     name = (hist["candidatename"].dropna().iloc[0]
             if "candidatename" in hist.columns and hist["candidatename"].notna().any() else email)
+    if not (isinstance(name, str) and name.strip()):
+        name = email
+    scores = hist["score_pct"].dropna()
 
-    # Peer baseline = everyone in the passed-in peer set (the current selection)
-    peer = peer_df.copy()
-    peer["score_pct"] = pd.to_numeric(peer.get("score_pct"), errors="coerce")
-    peer_avg = peer["score_pct"].mean()
-
-    cand_avg, cand_max, cand_min = hist["score_pct"].mean(), hist["score_pct"].max(), hist["score_pct"].min()
-    avg_time = hist["duration_min"].mean() if "duration_min" in hist.columns else None
-    pass_rate = (hist["pass_status"] == "passed").mean() * 100 if "pass_status" in hist.columns else None
-    viol_total = hist["violation_count"].sum() if "violation_count" in hist.columns else 0
-    integrity = (hist["violation_count"].sum() * 2.0 + hist["violation_duration_sec"].sum() / 60.0
-                 ) if {"violation_count", "violation_duration_sec"}.issubset(hist.columns) else None
-
+    # Peer baseline (one avg per person)
     peer_means = peer.dropna(subset=["score_pct"]).groupby("email")["score_pct"].mean()
-    total_peers = int(peer_means.shape[0])
+    peer_avg = float(peer_means.mean()) if not peer_means.empty else None
     rank = int(peer_means.rank(ascending=False, method="min").get(email)) if email in peer_means.index else None
+    percentile = float(peer_means.rank(pct=True).get(email) * 100) if email in peer_means.index else None
 
+    # Integrity vs peers
+    integrity = peer_integrity_med = None
+    if {"violation_count", "violation_duration_sec"}.issubset(peer.columns):
+        peer_integ = peer.groupby("email").apply(
+            lambda g: g["violation_count"].fillna(0).sum() * 2.0 + g["violation_duration_sec"].fillna(0).sum() / 60.0)
+        integrity = float(peer_integ.get(email)) if email in peer_integ.index else None
+        peer_integrity_med = float(peer_integ.median()) if not peer_integ.empty else None
+
+    # Retake gap (days) — reconstructed from start_time, NOT attempt_number
     delays = []
     if "test_id" in hist.columns:
-        for _t, g in hist.dropna(subset=["start_dt"]).groupby("test_id"):
+        for _t, g in hist.dropna(subset=["_start_dt"]).groupby("test_id"):
             if len(g) > 1:
-                d = g.sort_values("attempt_number")["start_dt"].diff().dropna().dt.total_seconds() / 86400.0
+                d = g.sort_values("_start_dt")["_start_dt"].diff().dropna().dt.total_seconds() / 86400.0
                 delays.extend(d.tolist())
     avg_retake = (sum(delays) / len(delays)) if delays else None
 
-    st.markdown(f"### {name}")
-    st.caption(f"{email}  ·  vs **{group_label}**  ·  {len(hist)} attempt(s)")
+    # Per-specialization (candidate vs peer)
+    df_spec = None
+    if "specialization" in hist.columns:
+        cand_spec = hist.groupby("specialization").agg(
+            attempts=("score_pct", "size"), avg=("score_pct", "mean"),
+            pass_rate=("is_pass", lambda s: s.mean() * 100))
+        peer_spec = peer.groupby("specialization")["score_pct"].mean().rename("peer_avg")
+        df_spec = cand_spec.join(peer_spec).reset_index()
 
-    r1 = st.columns(5)
-    if pd.notna(cand_avg) and pd.notna(peer_avg):
-        diff = cand_avg - peer_avg
-        rel = (diff / peer_avg * 100) if peer_avg else 0
-        r1[0].metric(f"Avg Score vs {group_label}", f"{cand_avg:.1f}%",
-                     delta=f"{diff:+.1f} pts ({rel:+.0f}%) vs {peer_avg:.1f}%")
-    else:
-        r1[0].metric(f"Avg Score vs {group_label}", f"{cand_avg:.1f}%" if pd.notna(cand_avg) else "—")
-    r1[1].metric("Max Score", f"{cand_max:.1f}%" if pd.notna(cand_max) else "—")
-    r1[2].metric("Min Score", f"{cand_min:.1f}%" if pd.notna(cand_min) else "—")
-    r1[3].metric("Avg Time Spent", f"{avg_time:.1f} min" if avg_time is not None and pd.notna(avg_time) else "—")
-    r1[4].metric("Avg Retake Delay", f"{avg_retake:.1f} days" if avg_retake is not None else "—")
+    # Per-difficulty
+    df_diff = None
+    if "test_difficulty" in hist.columns:
+        df_diff = hist.groupby("test_difficulty").agg(
+            attempts=("score_pct", "size"), avg=("score_pct", "mean"),
+            pass_rate=("is_pass", lambda s: s.mean() * 100)).reset_index()
 
-    r2 = st.columns(4)
-    r2[0].metric("Pass Rate", f"{pass_rate:.0f}%" if pass_rate is not None and pd.notna(pass_rate) else "—")
-    r2[1].metric(f"Rank in {group_label}", f"{rank} / {total_peers}" if rank else "—")
-    r2[2].metric("Total Violations", fmt_int(viol_total))
-    r2[3].metric("Integrity Risk", f"{integrity:.1f}" if integrity is not None and pd.notna(integrity) else "—")
+    # Retake effectiveness (re-sat tests only): first vs latest sitting
+    df_retake = None
+    if "test_id" in hist.columns:
+        rows = []
+        for _t, g in hist.groupby("test_id"):
+            if len(g) > 1:
+                g2 = g.sort_values("_seq")
+                lbl = g2["test_title"].iloc[0] if "test_title" in g2.columns else str(_t)
+                rows.append({"test": lbl, "sittings": len(g2),
+                             "first": g2["score_pct"].iloc[0], "latest": g2["score_pct"].iloc[-1],
+                             "lift": g2["score_pct"].iloc[-1] - g2["score_pct"].iloc[0]})
+        df_retake = pd.DataFrame(rows)
 
+    # Latest proficiency
+    latest_prof = None
+    if "proficiency_level" in hist.columns and hist["proficiency_level"].notna().any():
+        latest_prof = hist.sort_values("_seq")["proficiency_level"].dropna().iloc[-1]
+
+    # Flagged (violation) sittings
+    df_viol = None
+    if "violation_count" in hist.columns:
+        v = hist[hist["violation_count"].fillna(0) > 0]
+        if not v.empty:
+            cols = [c for c in ["test_title", "_start_dt", "violation_count",
+                                "violation_duration_sec", "score_pct", "pass_status"] if c in v.columns]
+            df_viol = v[cols].sort_values("violation_count", ascending=False)
+
+    cand_avg = float(scores.mean()) if not scores.empty else None
+
+    # Narrative headline
+    parts = []
+    if cand_avg is not None and peer_avg is not None:
+        parts.append("above peer avg" if cand_avg >= peer_avg else "below peer avg")
+    if df_spec is not None and not df_spec.empty:
+        parts.append(f"strongest in {df_spec.sort_values('avg', ascending=False).iloc[0]['specialization']}")
+    if df_retake is not None and not df_retake.empty:
+        up, down = int((df_retake["lift"] > 0).sum()), int((df_retake["lift"] < 0).sum())
+        parts.append("retakes help" if up > down else ("retakes don't help" if down > up else "retakes mixed"))
+    n_flag = int((hist["violation_count"].fillna(0) > 0).sum()) if "violation_count" in hist.columns else 0
+    if n_flag:
+        parts.append(f"{n_flag} flagged sitting(s)")
+
+    return {
+        "name": name, "hist": hist, "n_attempts": len(hist),
+        "n_tests": int(hist["test_id"].nunique()) if "test_id" in hist.columns else None,
+        "cand_avg": cand_avg,
+        "cand_max": float(scores.max()) if not scores.empty else None,
+        "cand_min": float(scores.min()) if not scores.empty else None,
+        "peer_avg": peer_avg, "rank": rank, "total_peers": int(peer_means.shape[0]),
+        "percentile": percentile, "peer_means": peer_means,
+        "avg_time": float(hist["duration_min"].mean()) if "duration_min" in hist.columns and hist["duration_min"].notna().any() else None,
+        "pass_rate": float((hist["pass_status"] == "passed").mean() * 100) if "pass_status" in hist.columns else None,
+        "viol_total": float(hist["violation_count"].fillna(0).sum()) if "violation_count" in hist.columns else 0,
+        "n_flagged": n_flag, "integrity": integrity, "peer_integrity_med": peer_integrity_med,
+        "avg_retake": avg_retake, "latest_prof": latest_prof, "last_active": hist["_start_dt"].max(),
+        "df_spec": df_spec, "df_diff": df_diff, "df_retake": df_retake, "df_viol": df_viol,
+        "headline": " · ".join(parts),
+    }
+
+
+@st.dialog("Candidate Profile", width="large")
+def candidate_profile(peer_df: pd.DataFrame, email: str, group_label: str, nonce_key: str) -> None:
+    """Shared candidate profile (tabbed: Overview · Skills · Retakes · Integrity).
+    `peer_df` is the pre-filtered peer set; `group_label` names it. All computation
+    is in `_candidate_profile_data` (pure/testable); this only renders.
+    """
+    TPL = active_theme()["template"]
+    d = _candidate_profile_data(peer_df, email)
+    if d is None:
+        st.warning("No attempts found for this candidate.")
+        if st.button("Close"):
+            st.session_state[nonce_key] = st.session_state.get(nonce_key, 0) + 1
+            st.rerun()
+        return
+
+    hist = d["hist"]
+    st.markdown(f"### {d['name']}")
+    sub = f"{email}  ·  vs **{group_label}**  ·  {d['n_attempts']} sitting(s)"
+    if d["n_tests"]:
+        sub += f" across {d['n_tests']} test(s)"
+    if d["last_active"] is not None and pd.notna(d["last_active"]):
+        sub += f"  ·  last active {d['last_active'].date()}"
+    st.caption(sub)
+    if d["headline"]:
+        st.markdown(
+            f"<div style='border-left:3px solid {ORANGE};padding:4px 10px;margin:2px 0 10px;"
+            f"opacity:0.85;font-size:13px'>{d['headline']}</div>", unsafe_allow_html=True)
+
+    t_over, t_skill, t_retake, t_integ = st.tabs(
+        ["Overview", "Skills", "Retakes", "🛡 Integrity"])
+
+    # ───────────────────────── Overview ─────────────────────────
+    with t_over:
+        r1 = st.columns(5)
+        if d["cand_avg"] is not None and d["peer_avg"] is not None:
+            diff = d["cand_avg"] - d["peer_avg"]
+            r1[0].metric("Avg Score", f"{d['cand_avg']:.1f}%",
+                         delta=f"{diff:+.1f} pts vs peer {d['peer_avg']:.1f}%")
+        else:
+            r1[0].metric("Avg Score", f"{d['cand_avg']:.1f}%" if d["cand_avg"] is not None else "—")
+        r1[1].metric("Percentile", f"{d['percentile']:.0f}th" if d["percentile"] is not None else "—",
+                     delta=(f"rank {d['rank']}/{d['total_peers']}" if d["rank"] else None), delta_color="off")
+        r1[2].metric("Pass Rate", f"{d['pass_rate']:.0f}%" if d["pass_rate"] is not None else "—")
+        r1[3].metric("Latest Proficiency", d["latest_prof"] or "—")
+        r1[4].metric("Avg Time", f"{d['avg_time']:.1f} min" if d["avg_time"] is not None else "—")
+
+        r2 = st.columns(5)
+        r2[0].metric("Best", f"{d['cand_max']:.1f}%" if d["cand_max"] is not None else "—")
+        r2[1].metric("Worst", f"{d['cand_min']:.1f}%" if d["cand_min"] is not None else "—")
+        r2[2].metric("Avg Retake Gap", f"{d['avg_retake']:.1f} days" if d["avg_retake"] is not None else "—")
+        r2[3].metric("Flagged Sittings", fmt_int(d["n_flagged"]))
+        r2[4].metric("Integrity Risk", f"{d['integrity']:.0f}" if d["integrity"] is not None else "—",
+                     delta=(f"peer median {d['peer_integrity_med']:.0f}" if d["peer_integrity_med"] is not None else None),
+                     delta_color="off")
+
+        # Where they sit in the peer score distribution
+        pm = d["peer_means"]
+        if pm is not None and len(pm) > 1 and d["cand_avg"] is not None:
+            st.markdown("<div class='card-title'>Position vs Peers (avg-score distribution)</div>", unsafe_allow_html=True)
+            fig_h = px.histogram(pm.to_frame("avg"), x="avg", nbins=25, template=TPL,
+                                 color_discrete_sequence=[NAVY], labels={"avg": "Peer avg score %"})
+            fig_h.add_vline(x=d["cand_avg"], line_color=ORANGE, line_width=3,
+                            annotation_text=f"{d['name'].split()[0]} {d['cand_avg']:.0f}%")
+            fig_h.update_layout(height=240, margin=dict(t=10, b=10, l=0, r=0), showlegend=False, bargap=0.05)
+            st.plotly_chart(fig_h, use_container_width=True)
+
+        # Score trend, segmented by specialization where available
+        st.markdown("<div class='card-title'>Score Trend Over Time</div>", unsafe_allow_html=True)
+        tl = hist.dropna(subset=["_start_dt"]).sort_values("_start_dt")
+        if not tl.empty:
+            color = "specialization" if ("specialization" in tl.columns and tl["specialization"].nunique() > 1) else None
+            figt = px.line(tl, x="_start_dt", y="score_pct", markers=True, color=color, template=TPL,
+                           labels={"_start_dt": "", "score_pct": "Score %", "specialization": ""})
+            if color is None:
+                figt.update_traces(line_color=ORANGE)
+            figt.add_hline(y=80, line_dash="dot", line_color=GREEN, annotation_text="Advanced")
+            figt.add_hline(y=50, line_dash="dot", line_color=AMBER, annotation_text="Intermediate")
+            figt.update_layout(height=260, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]),
+                               legend=dict(orientation="h", yanchor="bottom", y=1.02))
+            st.plotly_chart(figt, use_container_width=True)
+            if color:
+                st.caption("Each line is one specialization — separates real learning from test-to-test mix.")
+        else:
+            st.caption("No timestamped attempts.")
+
+    # ───────────────────────── Skills ───────────────────────────
+    with t_skill:
+        if d["df_spec"] is not None and not d["df_spec"].empty:
+            st.markdown("<div class='card-title'>By Specialization — Candidate vs Peer Avg</div>", unsafe_allow_html=True)
+            sp = d["df_spec"].sort_values("avg", ascending=False)
+            mlt = sp.melt(id_vars="specialization", value_vars=["avg", "peer_avg"],
+                          var_name="who", value_name="score")
+            mlt["who"] = mlt["who"].map({"avg": d["name"].split()[0], "peer_avg": "Peer avg"})
+            fig_sp = px.bar(mlt, x="specialization", y="score", color="who", barmode="group", template=TPL,
+                            color_discrete_sequence=[ORANGE, SLATE], labels={"specialization": "", "score": "Avg %", "who": ""})
+            fig_sp.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]),
+                                 legend=dict(orientation="h", yanchor="bottom", y=1.02))
+            st.plotly_chart(fig_sp, use_container_width=True)
+            st.caption("Specialization is ~half genuine on current data (rest force-mapped) — read directionally.")
+        if d["df_diff"] is not None and not d["df_diff"].empty:
+            st.markdown("<div class='card-title'>By Assessment Level</div>", unsafe_allow_html=True)
+            _do = ["Beginner", "Intermediate", "Advanced"]
+            dd = d["df_diff"].set_index("test_difficulty").reindex(_do).dropna(how="all").reset_index()
+            fig_dd = px.bar(dd, x="test_difficulty", y="avg", template=TPL, text=dd["pass_rate"].round(0).astype("Int64").astype(str) + "% pass",
+                            color="avg", color_continuous_scale=[[0, RED], [0.5, AMBER], [1, GREEN]], range_color=[0, 100],
+                            labels={"test_difficulty": "", "avg": "Avg Score %"})
+            fig_dd.update_traces(textposition="outside")
+            fig_dd.update_layout(height=280, margin=dict(t=10, b=10, l=0, r=0), coloraxis_showscale=False, yaxis=dict(range=[0, 115]))
+            st.plotly_chart(fig_dd, use_container_width=True)
+        if (d["df_spec"] is None or d["df_spec"].empty) and (d["df_diff"] is None or d["df_diff"].empty):
+            st.info("No specialization / difficulty breakdown available.")
+
+    # ───────────────────────── Retakes ──────────────────────────
+    with t_retake:
+        dr = d["df_retake"]
+        if dr is None or dr.empty:
+            st.info("This candidate never re-sat a test in the current selection.")
+        else:
+            up, down = int((dr["lift"] > 0).sum()), int((dr["lift"] < 0).sum())
+            st.caption(f"{len(dr)} re-sat test(s): {up} improved, {down} got worse, "
+                       f"{len(dr) - up - down} unchanged. Avg gap "
+                       f"{d['avg_retake']:.1f} days." if d["avg_retake"] is not None else
+                       f"{len(dr)} re-sat test(s): {up} improved, {down} got worse.")
+            dr2 = (dr.assign(_abs=dr["lift"].abs())
+                   .sort_values("_abs", ascending=False).head(20).sort_values("lift"))
+            dr2["dir"] = dr2["lift"].apply(lambda x: "Improved" if x > 0 else ("Declined" if x < 0 else "Same"))
+            fig_r = px.bar(dr2, x="lift", y="test", orientation="h", color="dir", template=TPL,
+                           color_discrete_map={"Improved": GREEN, "Declined": RED, "Same": SLATE},
+                           labels={"lift": "Score change (latest − first), pts", "test": "", "dir": ""})
+            fig_r.update_layout(height=max(220, 30 * len(dr2)), margin=dict(t=10, b=10, l=0, r=0),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02))
+            st.plotly_chart(fig_r, use_container_width=True)
+            if len(dr) > 20:
+                st.caption(f"Chart shows the 20 largest changes of {len(dr)} re-sat tests; full list below.")
+            st.dataframe(
+                dr.sort_values("lift")[["test", "sittings", "first", "latest", "lift"]].rename(columns={
+                    "test": "Test", "sittings": "Sittings", "first": "First %", "latest": "Latest %", "lift": "Lift (pts)"}),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "First %": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Latest %": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Lift (pts)": st.column_config.NumberColumn(format="%+.1f"),
+                })
+
+    # ───────────────────────── Integrity ────────────────────────
+    with t_integ:
+        cols = st.columns(3)
+        cols[0].metric("Integrity Risk", f"{d['integrity']:.0f}" if d["integrity"] is not None else "—",
+                       delta=(f"peer median {d['peer_integrity_med']:.0f}" if d["peer_integrity_med"] is not None else None),
+                       delta_color="off")
+        cols[1].metric("Flagged Sittings", fmt_int(d["n_flagged"]))
+        cols[2].metric("Total Violations", fmt_int(d["viol_total"]))
+        dv = d["df_viol"]
+        if dv is None or dv.empty:
+            st.success("No test-window violations on record — clean integrity profile.", icon="✅")
+        else:
+            st.markdown("<div class='card-title'>Flagged Sittings</div>", unsafe_allow_html=True)
+            ren = {"test_title": "Test", "_start_dt": "When", "violation_count": "Violations",
+                   "violation_duration_sec": "Viol. secs", "score_pct": "Score %", "pass_status": "Outcome"}
+            st.dataframe(
+                dv.rename(columns=ren), use_container_width=True, hide_index=True,
+                column_config={
+                    "When": st.column_config.DatetimeColumn("When", format="YYYY-MM-DD HH:mm"),
+                    "Score %": st.column_config.NumberColumn(format="%.1f%%"),
+                })
+            st.caption("Risk score = 2×violations + violation-minutes. Review queue, not a verdict.")
+
+    # ───────────────────────── Footer ───────────────────────────
     st.divider()
-
-    # Every assessment score
-    st.markdown("<div class='card-title'>Assessment Scores</div>", unsafe_allow_html=True)
-    bar = hist.sort_values("start_dt").copy()
-    bar["label"] = (bar["test_title"] if "test_title" in bar.columns else "Test")
-    bar["label"] = bar["label"].fillna("Test").astype(str)
-    if "attempt_number" in bar.columns:
-        dup = bar["label"].duplicated(keep=False)
-        bar.loc[dup, "label"] = bar.loc[dup].apply(
-            lambda r: f"{r['label']} (#{int(r['attempt_number'])})" if pd.notna(r["attempt_number"]) else r["label"],
-            axis=1)
-    color_arg = "pass_status" if "pass_status" in bar.columns else None
-    fig = px.bar(bar, x="label", y="score_pct", color=color_arg,
-                 color_discrete_map={"passed": GREEN, "failed": RED}, template=TPL,
-                 labels={"label": "", "score_pct": "Score %", "pass_status": "Outcome"})
-    fig.update_layout(height=250, bargap=0.55, margin=dict(t=10, b=10, l=0, r=0),
-                      yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02))
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("<div class='card-title'>Score Trend Over Time</div>", unsafe_allow_html=True)
-    tl = hist.dropna(subset=["start_dt"]).sort_values("start_dt")
-    if not tl.empty:
-        figt = px.line(tl, x="start_dt", y="score_pct", markers=True, template=TPL,
-                       labels={"start_dt": "", "score_pct": "Score %"})
-        figt.update_traces(line_color=ORANGE)
-        figt.add_hline(y=80, line_dash="dot", line_color=GREEN, annotation_text="Advanced")
-        figt.add_hline(y=50, line_dash="dot", line_color=AMBER, annotation_text="Intermediate")
-        figt.update_layout(height=230, margin=dict(t=10, b=10, l=0, r=0), yaxis=dict(range=[0, 105]))
-        st.plotly_chart(figt, use_container_width=True)
-    else:
-        st.caption("No timestamped attempts.")
-
-    if st.button("Close", type="primary"):
+    fcols = st.columns([1, 1])
+    fcols[0].download_button(
+        "⬇ Export this candidate's sittings (CSV)",
+        hist.drop(columns=[c for c in ["_start_dt"] if c in hist.columns]).to_csv(index=False).encode(),
+        file_name=f"candidate_{email.split('@')[0]}.csv", mime="text/csv", use_container_width=True)
+    if fcols[1].button("Close", type="primary", use_container_width=True):
         st.session_state[nonce_key] = st.session_state.get(nonce_key, 0) + 1
         st.rerun()
