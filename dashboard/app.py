@@ -7,14 +7,18 @@ Slicers: Year / Quarter / Month / Difficulty.
 from __future__ import annotations
 
 import concurrent.futures
+import html as _html
 import logging
+import re
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
 from data_access import AthenaViewReader
+from shared import render_nav
 
 logger = logging.getLogger(__name__)
 
@@ -33,24 +37,83 @@ ORANGE_LIGHT = "#FED7AA"
 DARK_BLUE    = "#0F172A"   # secondary
 NAVY         = "#1E3A8A"
 SLATE        = "#334155"
-GRAY_BG      = "#F8FAFC"
 GREEN        = "#10B981"
 AMBER        = "#F59E0B"
 RED          = "#EF4444"
 
+# Theme-dependent tokens. These are *defaults* (dark); they are re-assigned at
+# the top of main() from the live Streamlit theme so inline HTML headers and
+# Plotly charts follow whatever the user picks in ☰ → Settings → Theme.
+TEXT_MAIN    = "#E2E8F0"   # primary text  (set per active theme)
+TEXT_MUTED   = "#94A3B8"   # secondary text
+BORDER       = "#334155"   # hairlines / grid
+PLOT_TEMPLATE = "plotly_dark+dodokpo_dark"
+
+# Two Plotly templates with transparent backgrounds so charts blend into the
+# Streamlit surface in either theme. The right one is selected at runtime.
+pio.templates["dodokpo_dark"] = go.layout.Template(
+    layout=dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E2E8F0"),
+        xaxis=dict(gridcolor="#334155", zerolinecolor="#334155"),
+        yaxis=dict(gridcolor="#334155", zerolinecolor="#334155"),
+    )
+)
+pio.templates["dodokpo_light"] = go.layout.Template(
+    layout=dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#0F172A"),
+        xaxis=dict(gridcolor="#E2E8F0", zerolinecolor="#E2E8F0"),
+        yaxis=dict(gridcolor="#E2E8F0", zerolinecolor="#E2E8F0"),
+    )
+)
+
+THEME_TOKENS = {
+    "dark":  {"text": "#E2E8F0", "muted": "#94A3B8", "border": "#334155",
+              "template": "plotly_dark+dodokpo_dark"},
+    "light": {"text": "#0F172A", "muted": "#475569", "border": "#CBD5E1",
+              "template": "plotly_white+dodokpo_light"},
+}
+
+
+def _apply_active_theme() -> None:
+    """Read the live Streamlit theme and update the theme-dependent globals.
+
+    Called once at the top of main(). Because Streamlit reruns the whole script
+    when the user flips the built-in Light/Dark switch, this keeps our inline
+    HTML headers and Plotly charts in sync with the native theme automatically.
+    """
+    global TEXT_MAIN, TEXT_MUTED, BORDER, PLOT_TEMPLATE
+    try:
+        kind = (st.context.theme.type or "light").lower()
+    except Exception:
+        kind = "light"
+    tokens = THEME_TOKENS.get(kind, THEME_TOKENS["light"])
+    TEXT_MAIN, TEXT_MUTED, BORDER = tokens["text"], tokens["muted"], tokens["border"]
+    PLOT_TEMPLATE = tokens["template"]
+
+
 # ---------------------------------------------------------------------------
-# Styling
+# Styling — theme-AGNOSTIC. Only brand accents + translucent neutrals + muted
+# text via opacity, so nothing here fights the native Light/Dark theme. Surface
+# and text colours are left to Streamlit so the built-in theme switch works.
 # ---------------------------------------------------------------------------
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-.main {{ background-color: {GRAY_BG}; }}
 
-/* Sidebar (dark blue) */
+/* Sidebar — fixed dark-blue brand panel, independent of the light/dark theme.
+   Force light text inside so it stays legible on the dark-blue background. */
 section[data-testid="stSidebar"] {{ background-color: {DARK_BLUE} !important; }}
-section[data-testid="stSidebar"] * {{ color: #E2E8F0 !important; }}
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {{
+    color: #E2E8F0 !important;
+}}
 section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
     color: {ORANGE} !important;
     text-transform: uppercase;
@@ -59,78 +122,65 @@ section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
     font-weight: 700 !important;
 }}
 section[data-testid="stSidebar"] label {{
-    color: #94A3B8 !important;
     font-size: 11px !important;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     font-weight: 600 !important;
+    opacity: 0.9;
 }}
 
-/* KPI cards */
-[data-testid="stMetricValue"] {{
-    font-size: 26px !important;
-    color: {DARK_BLUE} !important;
-    font-weight: 800 !important;
-}}
+/* KPI metric cards — translucent neutral panel + orange accent (theme-safe) */
+[data-testid="stMetricValue"] {{ font-size: 26px !important; font-weight: 800 !important; }}
 [data-testid="stMetricLabel"] {{
     font-size: 11px !important;
-    color: {SLATE} !important;
     text-transform: uppercase !important;
     letter-spacing: 0.7px !important;
     font-weight: 700 !important;
+    opacity: 0.75;
 }}
 [data-testid="stMetricDelta"] {{ font-size: 12px !important; }}
-
-/* Card container around metric blocks */
 div[data-testid="stMetric"] {{
-    background: #FFFFFF;
+    background: rgba(148,163,184,0.10);
+    border: 1px solid rgba(148,163,184,0.18);
     border-left: 4px solid {ORANGE};
     border-radius: 6px;
     padding: 14px 18px;
-    box-shadow: 0 1px 3px rgba(15,23,42,0.06);
 }}
 
-/* Page headings */
+/* Page headings — inherit theme text colour; mute the subtitle via opacity */
 .page-header {{
     font-size: 28px;
     font-weight: 800;
-    color: {DARK_BLUE};
     letter-spacing: -0.5px;
     margin-bottom: 2px;
 }}
-.page-sub {{
-    font-size: 13px;
-    color: {SLATE};
-    margin-bottom: 20px;
-}}
+.page-sub {{ font-size: 13px; opacity: 0.65; margin-bottom: 20px; }}
 
 /* Tabs */
-.stTabs [data-baseweb="tab-list"] button[data-baseweb="tab"] {{
-    color: {SLATE};
-    font-weight: 600;
-}}
+.stTabs [data-baseweb="tab-list"] button[data-baseweb="tab"] {{ font-weight: 600; opacity: 0.7; }}
 .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
     color: {ORANGE} !important;
     border-bottom: 3px solid {ORANGE} !important;
+    opacity: 1;
 }}
 
 /* Card */
 .card {{
-    background: #FFFFFF;
+    background: rgba(148,163,184,0.10);
+    border: 1px solid rgba(148,163,184,0.18);
     border-radius: 8px;
     padding: 18px 22px;
-    box-shadow: 0 1px 3px rgba(15,23,42,0.06);
     margin-bottom: 14px;
 }}
 .card-title {{
     font-size: 12px;
     font-weight: 700;
-    color: {SLATE};
     text-transform: uppercase;
     letter-spacing: 0.7px;
     margin-bottom: 12px;
     border-left: 3px solid {ORANGE};
     padding-left: 8px;
+    opacity: 0.75;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -191,9 +241,9 @@ def _query_attempt_questions(
         LIMIT 1
     ),
     question_dedup AS (
-        SELECT id, questiontype, difficultylevel, questiontitle
+        SELECT id, questiontype, difficultylevel, questiontitle, questiontext
         FROM (
-            SELECT id, questiontype, difficultylevel, questiontitle, load_date,
+            SELECT id, questiontype, difficultylevel, questiontitle, questiontext, load_date,
                    ROW_NUMBER() OVER (PARTITION BY id ORDER BY load_date DESC) AS _rn
             FROM dodokpo_dev_silver.test_creation_question
         )
@@ -228,7 +278,7 @@ def _query_attempt_questions(
         p.passmark, p.testpercentage, p.totalscore, p.totalpassedscore,
         p.passstatus, p.attempt_duration_sec,
         p.starttime, p.finishtime,
-        qd.questiontitle, qd.questiontype,
+        qd.questiontitle, qd.questiontext AS question_text, qd.questiontype,
         qd.difficultylevel AS question_difficulty
     FROM parsed p
     LEFT JOIN question_dedup qd ON p.question_id = qd.id
@@ -248,7 +298,7 @@ def _query_attempt_questions(
 def load_all_data() -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Run all Athena queries concurrently. Returns (data dict, error list)."""
     view_specs = [
-        ("trainer_candidate_performance", 50_000, "start_time DESC"),
+        ("cohort_specialization_attempt", 50_000, "start_time DESC"),
         ("monthly_assessment_trend",      None,   None),
         ("candidate_retake_intervals",    50_000, "start_time DESC"),
         ("trainer_quality_violations",    50_000, "load_date DESC"),
@@ -274,7 +324,7 @@ def load_all_data() -> tuple[dict[str, pd.DataFrame], list[str]]:
                 errors.append(f"**{view}**: {err}")
 
     return {
-        "candidate_perf": results.get("trainer_candidate_performance", pd.DataFrame()),
+        "candidate_perf": results.get("cohort_specialization_attempt", pd.DataFrame()),
         "monthly_trend":  results.get("monthly_assessment_trend",      pd.DataFrame()),
         "retake":         results.get("candidate_retake_intervals",    pd.DataFrame()),
         "violations":     results.get("trainer_quality_violations",    pd.DataFrame()),
@@ -295,6 +345,7 @@ def _apply_filters(
     months: list[str],
     difficulties: list[str],
     organizations: list[str] | None = None,
+    specializations: list[str] | None = None,
 ) -> pd.DataFrame:
     if df.empty:
         return df
@@ -309,11 +360,34 @@ def _apply_filters(
         out = out[out["test_difficulty"].isin(difficulties)]
     if organizations and "organization_name" in out.columns:
         out = out[out["organization_name"].isin(organizations)]
+    if specializations and "specialization" in out.columns:
+        out = out[out["specialization"].isin(specializations)]
     return out
 
 
 def _kpi_card(label: str, value: str, *, icon: str = "") -> None:
     st.metric(f"{icon} {label}" if icon else label, value)
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(value) -> str:
+    """Render source question HTML as clean plain text for table display.
+
+    `questiontext` comes from the authoring tool as rich HTML (`<p>`, `<br>`,
+    `&nbsp;`, code blocks, etc.). We drop tags, decode entities, and collapse
+    whitespace so the full prompt reads cleanly in a table cell / hover tooltip.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value)
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"</(p|div|li)>", " ", text, flags=re.IGNORECASE)
+    text = _HTML_TAG_RE.sub("", text)
+    text = _html.unescape(text)        # &nbsp; &amp; &lt; → space, &, <
+    text = text.replace("\xa0", " ")   # non-breaking spaces from &nbsp;
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _fmt_int(n) -> str:
@@ -390,12 +464,15 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
 
     Shows lifetime KPIs plus year-over-year and quarter-over-quarter trends so
     trainers can see if a candidate is improving or regressing over time.
-    Always uses the full candidate history (ignores the page-level slicers).
+    Receives the slicer-FILTERED frame, so the KPIs, attempt list and
+    progression charts reflect only the attempts matching the active filters
+    (e.g. Assessment Level = advanced → advanced attempts only).
     """
     history = cp[cp["email"] == email].copy()
     if history.empty:
         st.warning("No history found for this candidate.")
         if st.button("Close"):
+            st.session_state["roster_nonce"] = st.session_state.get("roster_nonce", 0) + 1
             st.rerun()
         return
 
@@ -451,7 +528,7 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
             line=dict(color=DARK_BLUE, width=2.5, dash="dot"), marker=dict(size=8),
         ))
         fig.update_layout(
-            template="plotly_white", height=290,
+            template=PLOT_TEMPLATE, height=290,
             margin=dict(t=10, b=0, l=0, r=0),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
             yaxis=dict(title="Score / Pass Rate (%)", range=[0, 105]),
@@ -464,7 +541,7 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
 
     with col_yr:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:13px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:13px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:6px'>"
             "Yearly Progression</div>",
@@ -478,14 +555,14 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
 
     with sep:
         st.markdown(
-            f"<div style='border-left:3px solid {DARK_BLUE};height:330px;"
+            f"<div style='border-left:3px solid {BORDER};height:330px;"
             "margin-top:6px;opacity:0.9'></div>",
             unsafe_allow_html=True,
         )
 
     with col_mo:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:13px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:13px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:6px'>"
             "Monthly Progression</div>",
@@ -518,7 +595,7 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
         "pass_status":     "Outcome",
         "duration_min":    "Duration (min)",
         "violation_count": "Violations",
-        "test_difficulty": "Difficulty",
+        "test_difficulty": "Assessment Level",
     })
     attempt_event = st.dataframe(
         display_df, use_container_width=True, hide_index=True,
@@ -542,6 +619,9 @@ def show_candidate_drilldown(cp: pd.DataFrame, email: str, retake_df: pd.DataFra
         )
 
     if st.button("Close", type="primary"):
+        # Reset the roster table's selection so this dialog doesn't immediately
+        # re-open on the rerun (its row selection otherwise persists).
+        st.session_state["roster_nonce"] = st.session_state.get("roster_nonce", 0) + 1
         st.rerun()
 
 
@@ -556,10 +636,10 @@ def _render_attempt_detail(
     """Per-attempt question-level drill-down rendered inline below the table."""
     st.divider()
     st.markdown(
-        f"<div style='color:{DARK_BLUE};font-weight:800;font-size:16px;"
+        f"<div style='color:{TEXT_MAIN};font-weight:800;font-size:16px;"
         f"border-left:4px solid {ORANGE};padding-left:10px;margin:8px 0'>"
         f"Attempt Detail — {test_title}"
-        f"<span style='font-weight:500;color:{SLATE};font-size:12px;margin-left:12px'>"
+        f"<span style='font-weight:500;color:{TEXT_MUTED};font-size:12px;margin-left:12px'>"
         f"{candidate_name} · started {start_time}</span></div>",
         unsafe_allow_html=True,
     )
@@ -589,6 +669,19 @@ def _render_attempt_detail(
                     "attempt_duration_sec"):
         if num_col in questions.columns:
             questions[num_col] = pd.to_numeric(questions[num_col], errors="coerce")
+
+    # Clean the source question HTML into readable plain text. `questiontext`
+    # holds the real prompt (the platform's `questiontitle` is usually blank),
+    # so prefer it and fall back to the title only when text is missing.
+    if "question_text" in questions.columns:
+        questions["question_clean"] = questions["question_text"].map(_strip_html)
+    else:
+        questions["question_clean"] = ""
+    if "questiontitle" in questions.columns:
+        _title_clean = questions["questiontitle"].map(_strip_html)
+        questions["question_clean"] = questions["question_clean"].where(
+            questions["question_clean"].str.len() > 0, _title_clean
+        )
 
     # ── KPI cards ────────────────────────────────────────────────
     # Pinned to the testresult aggregate columns (the system's own arithmetic)
@@ -649,7 +742,7 @@ def _render_attempt_detail(
     col_a, sep_ab, col_b = st.columns([1, 0.03, 1])
     with col_a:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:12px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:12px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:4px'>"
             "Correct vs Wrong vs Unanswered</div>",
@@ -666,7 +759,7 @@ def _render_attempt_detail(
             outcome, names="Outcome", values="Count", hole=0.55,
             color="Outcome",
             color_discrete_map={"Correct": GREEN, "Wrong": RED, "Unanswered": SLATE},
-            template="plotly_white",
+            template=PLOT_TEMPLATE,
         )
         fig_o.update_traces(textinfo="percent+label")
         fig_o.update_layout(height=260, showlegend=False,
@@ -675,14 +768,14 @@ def _render_attempt_detail(
 
     with sep_ab:
         st.markdown(
-            f"<div style='border-left:3px solid {DARK_BLUE};height:280px;"
+            f"<div style='border-left:3px solid {BORDER};height:280px;"
             "margin-top:6px;opacity:0.85'></div>",
             unsafe_allow_html=True,
         )
 
     with col_b:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:12px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:12px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:4px'>"
             "Question Type Mix</div>",
@@ -695,7 +788,7 @@ def _render_attempt_detail(
             )
             fig_t = px.pie(
                 qtype, names="Type", values="Count", hole=0.55,
-                template="plotly_white",
+                template=PLOT_TEMPLATE,
                 color_discrete_sequence=[ORANGE, NAVY, AMBER, DARK_BLUE, GREEN, "#9333EA"],
             )
             fig_t.update_traces(textinfo="percent+label")
@@ -709,7 +802,7 @@ def _render_attempt_detail(
     col_c, sep_cd, col_d = st.columns([1, 0.03, 1])
     with col_c:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:12px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:12px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:4px'>"
             "Idle Time vs Correctness</div>",
@@ -722,9 +815,10 @@ def _render_attempt_detail(
             plot_df, x="q_num", y="idle_time_sec",
             color="outcome", size="max_score",
             color_discrete_map={"Correct": GREEN, "Wrong": RED, "Unanswered": SLATE},
-            template="plotly_white", height=260,
-            labels={"q_num": "Question #", "idle_time_sec": "Idle Time (s)", "outcome": ""},
-            hover_data=["questiontitle", "question_difficulty"] if "questiontitle" in plot_df.columns else None,
+            template=PLOT_TEMPLATE, height=260,
+            labels={"q_num": "Question #", "idle_time_sec": "Idle Time (s)", "outcome": "",
+                    "question_clean": "Question", "question_difficulty": "Question Difficulty"},
+            hover_data=["question_clean", "question_difficulty"] if "question_clean" in plot_df.columns else None,
         )
         fig_i.update_layout(margin=dict(t=10, b=10, l=0, r=0),
                             legend=dict(orientation="h", yanchor="bottom", y=1.02))
@@ -732,14 +826,14 @@ def _render_attempt_detail(
 
     with sep_cd:
         st.markdown(
-            f"<div style='border-left:3px solid {DARK_BLUE};height:280px;"
+            f"<div style='border-left:3px solid {BORDER};height:280px;"
             "margin-top:6px;opacity:0.85'></div>",
             unsafe_allow_html=True,
         )
 
     with col_d:
         st.markdown(
-            f"<div style='color:{DARK_BLUE};font-weight:700;font-size:12px;"
+            f"<div style='color:{TEXT_MAIN};font-weight:700;font-size:12px;"
             f"text-transform:uppercase;letter-spacing:0.6px;"
             f"border-left:3px solid {ORANGE};padding-left:8px;margin-bottom:4px'>"
             "Score Earned vs Max per Question</div>",
@@ -756,7 +850,7 @@ def _render_attempt_detail(
         })
         fig_s = px.bar(
             bar_long, x="q_num", y="score", color="metric",
-            barmode="group", template="plotly_white", height=260,
+            barmode="group", template=PLOT_TEMPLATE, height=260,
             color_discrete_map={"Earned": ORANGE, "Max": NAVY},
             labels={"q_num": "", "score": "Points", "metric": ""},
         )
@@ -773,27 +867,33 @@ def _render_attempt_detail(
     )
     questions_display = questions.copy()
     questions_display["#"] = range(1, len(questions_display) + 1)
+    # Question ID dropped from the visible table — the question text is the
+    # identifier the user cares about. Lengthy question text is truncated in the
+    # cell but shown in full on hover (see the "Question" TextColumn below).
     cols_order = [
-        "#", "questiontitle", "questiontype", "question_difficulty",
+        "#", "question_clean", "questiontype", "question_difficulty",
         "max_score", "achieved_score", "outcome", "marked_correct",
-        "is_answered", "idle_time_sec", "question_id",
+        "is_answered", "idle_time_sec",
     ]
     available_q = [c for c in cols_order if c in questions_display.columns]
     table = questions_display[available_q].rename(columns={
-        "questiontitle":       "Question",
+        "question_clean":      "Question",
         "questiontype":        "Type",
-        "question_difficulty": "Difficulty",
+        "question_difficulty": "Question Difficulty",
         "max_score":           "Max Score",
         "achieved_score":      "Earned",
         "outcome":             "Outcome",
         "marked_correct":      "Marked Correct?",
         "is_answered":         "Answered?",
         "idle_time_sec":       "Idle Time (s)",
-        "question_id":         "Question ID",
     })
     st.dataframe(
         table, use_container_width=True, hide_index=True,
         column_config={
+            "Question":        st.column_config.TextColumn(
+                "Question", width="large",
+                help="Full question text — hover a cell to read the entire question.",
+            ),
             "Max Score":       st.column_config.NumberColumn(format="%.1f"),
             "Earned":          st.column_config.NumberColumn(format="%.1f"),
             "Idle Time (s)":   st.column_config.NumberColumn(format="%.1f"),
@@ -900,7 +1000,7 @@ def render_monthly_trend(filtered_cp: pd.DataFrame) -> None:
         marker=dict(size=7, color=DARK_BLUE),
     ))
     fig.update_layout(
-        template="plotly_white",
+        template=PLOT_TEMPLATE,
         height=340,
         margin=dict(t=20, b=10, l=10, r=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
@@ -929,7 +1029,7 @@ def render_quarterly_yearly(filtered_cp: pd.DataFrame) -> None:
                 color="pass_rate_pct",
                 color_continuous_scale=[[0, RED], [0.5, AMBER], [1, GREEN]],
                 range_color=[0, 100],
-                template="plotly_white",
+                template=PLOT_TEMPLATE,
                 labels={"attempt_quarter": "", "pass_rate_pct": "Pass Rate (%)"},
             )
             fig.update_traces(textposition="outside")
@@ -957,7 +1057,7 @@ def render_quarterly_yearly(filtered_cp: pd.DataFrame) -> None:
                 line=dict(color=ORANGE, width=3), marker=dict(size=10),
             ))
             fig.update_layout(
-                height=300, template="plotly_white",
+                height=300, template=PLOT_TEMPLATE,
                 margin=dict(t=10, b=10, l=0, r=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 yaxis=dict(title="Attempts"),
@@ -979,7 +1079,7 @@ def render_pass_fail_difficulty(filtered_cp: pd.DataFrame) -> None:
                 pf, names="status", values="count", hole=0.55,
                 color="status",
                 color_discrete_map={"passed": GREEN, "failed": RED},
-                template="plotly_white",
+                template=PLOT_TEMPLATE,
             )
             fig.update_traces(textinfo="percent+label")
             fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
@@ -989,7 +1089,7 @@ def render_pass_fail_difficulty(filtered_cp: pd.DataFrame) -> None:
             st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        st.markdown("<div class='card-title'>Attempts by Difficulty</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Attempts by Assessment Level</div>", unsafe_allow_html=True)
         if "test_difficulty" in filtered_cp.columns and not filtered_cp.empty:
             d = (
                 filtered_cp.groupby(["test_difficulty", "pass_status"])
@@ -998,8 +1098,8 @@ def render_pass_fail_difficulty(filtered_cp: pd.DataFrame) -> None:
             fig = px.bar(
                 d, x="test_difficulty", y="count", color="pass_status",
                 color_discrete_map={"passed": GREEN, "failed": RED},
-                template="plotly_white", barmode="stack",
-                labels={"test_difficulty": "", "count": "Attempts", "pass_status": "Outcome"},
+                template=PLOT_TEMPLATE, barmode="stack",
+                labels={"test_difficulty": "Assessment Level", "count": "Attempts", "pass_status": "Outcome"},
             )
             fig.update_layout(height=300, margin=dict(t=10, b=10, l=0, r=0),
                               legend=dict(orientation="h", yanchor="bottom", y=1.02))
@@ -1018,7 +1118,7 @@ def render_violations_and_retake(filtered_cp: pd.DataFrame, retake_df: pd.DataFr
             )
             fig = px.area(
                 v, x="attempt_month", y="violation_count",
-                template="plotly_white",
+                template=PLOT_TEMPLATE,
                 labels={"attempt_month": "", "violation_count": "Violations"},
                 color_discrete_sequence=[ORANGE],
             )
@@ -1033,7 +1133,7 @@ def render_violations_and_retake(filtered_cp: pd.DataFrame, retake_df: pd.DataFr
             r = r[(r["days_between_attempts"] >= 0) & (r["days_between_attempts"] <= 60)]
             fig = px.histogram(
                 r, x="days_between_attempts", nbins=30,
-                template="plotly_white",
+                template=PLOT_TEMPLATE,
                 labels={"days_between_attempts": "Days between attempts"},
                 color_discrete_sequence=[NAVY],
             )
@@ -1069,6 +1169,8 @@ def render_freshness_bar(freshness: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    _apply_active_theme()
+    render_nav("executive")
     st.markdown("<div class='page-header'>🟧 Dodokpo Executive Intelligence</div>", unsafe_allow_html=True)
     st.markdown("<div class='page-sub'>Assessment performance, integrity & catalog operations · Gold Layer</div>", unsafe_allow_html=True)
 
@@ -1092,19 +1194,21 @@ def main() -> None:
         quarters = sorted([q for q in cp.get("attempt_quarter", pd.Series()).dropna().unique() if q])
         months = sorted([m for m in cp.get("attempt_month", pd.Series()).dropna().unique() if m])
         diffs = sorted([d for d in cp.get("test_difficulty", pd.Series()).dropna().unique() if d])
+        specs = sorted([s for s in cp.get("specialization", pd.Series()).dropna().unique() if s])
         orgs = sorted([o for o in cp.get("organization_name", pd.Series()).dropna().unique() if o])
 
         sel_year = st.multiselect("Year", years, default=[])
         sel_quarter = st.multiselect("Quarter", quarters, default=[])
         sel_month = st.multiselect("Month", months, default=[])
-        sel_diff = st.multiselect("Difficulty", diffs, default=[])
+        sel_diff = st.multiselect("Assessment Level", diffs, default=[])
+        sel_spec = st.multiselect("Specialization", specs, default=[])
         sel_org = st.multiselect("Organization", orgs, default=[])
 
         st.divider()
         st.caption(f"🟧 Connected to `{ATHENA_DATABASE}`")
 
     # Apply slicers
-    filtered_cp = _apply_filters(cp, sel_year, sel_quarter, sel_month, sel_diff, sel_org)
+    filtered_cp = _apply_filters(cp, sel_year, sel_quarter, sel_month, sel_diff, sel_org, sel_spec)
     filtered_retake = retake_df
     if not retake_df.empty and "assessment_taker_id" in filtered_cp.columns:
         valid_takers = set(filtered_cp["assessment_taker_id"].unique())
@@ -1141,12 +1245,17 @@ def main() -> None:
         st.info("No candidates found for the current filter selection.")
     else:
         st.caption(f"Showing {len(candidate_summary):,} unique candidates")
+        # Nonce in the key lets the Close button reset this widget's row
+        # selection — otherwise the selection persists across reruns and the
+        # drill-down dialog immediately re-opens after closing.
+        roster_key = f"roster_{st.session_state.get('roster_nonce', 0)}"
         event = st.dataframe(
             candidate_summary,
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
+            key=roster_key,
             column_config={
                 "Pass Rate (%)": st.column_config.ProgressColumn(
                     "Pass Rate", format="%.1f%%", min_value=0, max_value=100,
@@ -1159,9 +1268,11 @@ def main() -> None:
         if event and event.get("selection") and event["selection"].get("rows"):
             idx = event["selection"]["rows"][0]
             email = candidate_summary.iloc[idx]["Email"]
-            # Use the full unfiltered frame (cp) so drill-down can show
-            # cross-period comparison even when slicers narrow the roster.
-            show_candidate_drilldown(cp, email, retake_df)
+            # Use the FILTERED frame so the drill-down only shows attempts that
+            # match the active slicers. E.g. with Assessment Level = advanced,
+            # the candidate's attempt list and progression charts show advanced
+            # assessments only — not a mix of all levels.
+            show_candidate_drilldown(filtered_cp, email, retake_df)
 
     # ───────────── Export ─────────────
     if not filtered_cp.empty:

@@ -103,6 +103,7 @@ variable "gold_datasets" {
     "test_creation_question",
     "test_creation_assessment",
     "test_creation_skill",
+    "test_creation_assessment_dispatch",
   ]
 }
 

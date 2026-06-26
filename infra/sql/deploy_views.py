@@ -18,7 +18,13 @@ REGION          = "eu-west-1"
 DATABASE        = "dodokpo_dev_gold"
 WORKGROUP       = "dodokpo-dev-workgroup"
 RESULTS_BUCKET  = "dodokpo-dev-athena-results"
-SQL_FILE        = Path(__file__).parent / "trainer_executive_metrics_views.sql"
+
+# All view files deployed by default, in dependency order. The cohort/
+# specialization views read from the org-level views, so they deploy second.
+SQL_FILES = [
+    Path(__file__).parent / "trainer_executive_metrics_views.sql",
+    Path(__file__).parent / "cohort_specialization_views.sql",
+]
 
 
 def _split_statements(sql: str) -> list[str]:
@@ -56,20 +62,26 @@ def _run(client, sql: str, label: str) -> None:
 
 
 def main() -> None:
-    sql = SQL_FILE.read_text(encoding="utf-8")
-    statements = _split_statements(sql)
-    print(f"Found {len(statements)} view(s) to deploy to {DATABASE}\n")
+    # Optional: deploy only specific file(s) by basename, e.g.
+    #   python deploy_views.py cohort_specialization_views.sql
+    args = sys.argv[1:]
+    files = [Path(__file__).parent / a for a in args] if args else SQL_FILES
 
     client = boto3.client("athena", region_name=REGION)
+    total = 0
+    for sql_file in files:
+        sql = sql_file.read_text(encoding="utf-8")
+        statements = _split_statements(sql)
+        print(f"\n== {sql_file.name}: {len(statements)} view(s) -> {DATABASE} ==")
+        for stmt in statements:
+            # Extract view name for logging
+            m = re.search(r"VIEW\s+(\S+)\s+AS", stmt, re.IGNORECASE)
+            name = m.group(1) if m else "unknown"
+            print(f"Deploying {name} …")
+            _run(client, stmt, name)
+            total += 1
 
-    for stmt in statements:
-        # Extract view name for logging
-        m = re.search(r"VIEW\s+(\S+)\s+AS", stmt, re.IGNORECASE)
-        name = m.group(1) if m else "unknown"
-        print(f"Deploying {name} …")
-        _run(client, stmt, name)
-
-    print(f"\nAll {len(statements)} views deployed successfully.")
+    print(f"\nAll {total} views deployed successfully.")
 
 
 if __name__ == "__main__":

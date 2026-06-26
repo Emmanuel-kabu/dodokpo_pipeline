@@ -1,0 +1,6 @@
+# Default theme = light (white). Users can switch to dark at runtime via the
+# ☰ menu → Settings → Theme; the app's CSS and charts follow automatically.
+[theme]
+base = "light"
+primaryColor = "#F97316"
+font = "sans serif"

@@ -141,3 +141,24 @@ Full detail: [`docs/confluence/04_dashboard_guide.md`](confluence/04_dashboard_g
 - **Drill-down modal**: Selecting any audit trail row opens a per-candidate history modal with attempt table and score progression chart.
 - **Export**: Filtered dataset downloadable as CSV from the top-right button.
 - **Cache TTL**: S3 data is cached for 5 minutes per `@st.cache_data(ttl=300)`.
+
+---
+
+## 5. Cohort & Specialization Analytics
+
+Full detail: [`docs/confluence/06_cohort_specialization_analytics.md`](confluence/06_cohort_specialization_analytics.md) (implementation & operations) · [`docs/confluence/05_cohort_specialization_kpis.md`](confluence/05_cohort_specialization_kpis.md) (KPI dictionary)
+
+An **additive** analytics layer that takes reporting below the organization level — to
+**cohort** (Training Center, filterable by specialization) and **specialization** (Service
+Center / developers), with individual drill-down. It reuses the org-level
+`trainer_candidate_performance` view as its measure source; the existing org views are
+**unchanged**.
+
+- **Views**: 13 views in `dodokpo_dev_gold` from `infra/sql/cohort_specialization_views.sql`
+  (4 editable crosswalks, 1 base, 8 aggregates). Deployed via `python infra/sql/deploy_views.py`.
+- **Dimensions**: specialization (from assessment domain), tech (from category), cohort
+  (`<year> <program>` from dispatch tags), center.
+- **Dashboards**: `dashboard/pages/1_Training_Center.py` and `dashboard/pages/2_Service_Center.py`,
+  reachable from the Executive dashboard nav bar.
+- **Coverage today**: ~47.6% of attempts resolve to a real specialization; cohort coverage is
+  limited (~1.2%) by upstream program-tagging — see the operations guide.
