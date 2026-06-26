@@ -73,9 +73,9 @@ def inject_css() -> None:
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 
-/* Compact, centered report column — keeps charts from stretching edge-to-edge
-   on wide monitors (bars stay readable, the trend line stays short). */
-.block-container {{ max-width: 1080px; padding-top: 2rem; padding-bottom: 3rem; }}
+/* Full-width content with comfortable gutters so the page fills wide monitors,
+   consistent with the Executive page (no centered max-width cap). */
+.block-container {{ max-width: 100%; padding: 2rem 3rem 3rem; }}
 
 section[data-testid="stSidebar"] {{ background-color: {DARK_BLUE} !important; }}
 section[data-testid="stSidebar"] label,

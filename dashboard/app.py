@@ -104,6 +104,10 @@ st.markdown(f"""
 
 html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 
+/* Full-width content with comfortable gutters — matches the Training Center
+   page so both dashboards fill wide monitors consistently. */
+.block-container {{ max-width: 100%; padding: 2rem 3rem 3rem; }}
+
 /* Sidebar — fixed dark-blue brand panel, independent of the light/dark theme.
    Force light text inside so it stays legible on the dark-blue background. */
 section[data-testid="stSidebar"] {{ background-color: {DARK_BLUE} !important; }}
